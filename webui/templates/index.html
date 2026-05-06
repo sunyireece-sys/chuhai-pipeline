@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Sales Feedback — {{ run_id }}</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+<header>
+  <h1>Sales Feedback</h1>
+  <div class="meta">
+    Run: <strong>{{ run_id }}</strong> · 共 {{ rows|length }} 家公司
+    {% if current_user %} · User: <strong>{{ current_user }}</strong>{% endif %}
+  </div>
+</header>
+
+<main>
+  <table class="leads">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>公司</th>
+        <th>国家</th>
+        <th>Rating</th>
+        <th>邮箱</th>
+        <th>邮件主题</th>
+        <th>最新反馈</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+        {% include "_row.html" with context %}
+      {% endfor %}
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

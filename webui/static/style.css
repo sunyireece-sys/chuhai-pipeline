@@ -1,0 +1,229 @@
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  margin: 0;
+  padding: 0;
+  background: #f5f5f5;
+  color: #222;
+  font-size: 13px;
+  line-height: 1.5;
+}
+header {
+  background: #2c3e50;
+  color: #fff;
+  padding: 12px 24px;
+}
+header h1 { margin: 0 0 4px; font-size: 18px; }
+header .meta { font-size: 12px; opacity: 0.85; }
+main { padding: 16px 24px 80px; }
+
+table.leads {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+table.leads th, table.leads td {
+  border: 1px solid #ddd;
+  padding: 6px 10px;
+  vertical-align: top;
+  text-align: left;
+}
+table.leads th {
+  background: #ecf0f1;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+table.leads tr.has-feedback { background: #fafff5; }
+.num { color: #888; font-variant-numeric: tabular-nums; }
+.cname { font-weight: 600; }
+.weblink { font-size: 11px; color: #2980b9; text-decoration: none; word-break: break-all; }
+.email a { color: #2980b9; text-decoration: none; }
+.subject { max-width: 280px; }
+.muted { color: #aaa; }
+.phone { font-size: 12px; }
+
+.rating { display: inline-block; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
+.rating.r-S { background: #27ae60; color: #fff; }
+.rating.r-A { background: #2ecc71; color: #fff; }
+.rating.r-B { background: #95a5a6; color: #fff; }
+.rating.r-P { background: #f39c12; color: #fff; }
+.rating.r-Z { background: #e74c3c; color: #fff; }
+
+.status { display: inline-block; padding: 1px 6px; border-radius: 3px; background: #ecf0f1; font-size: 12px; }
+.status-已发待回 { background: #f1c40f; color: #fff; }
+.status-已回 { background: #3498db; color: #fff; }
+.status-已成交 { background: #27ae60; color: #fff; }
+.status-不相关, .status-邮箱无效, .status-国家错, .status-联系人不对 { background: #e67e22; color: #fff; }
+.status-未发 { background: #bdc3c7; color: #fff; }
+.who { font-size: 11px; color: #888; margin-top: 2px; }
+
+details summary {
+  cursor: pointer;
+  padding: 4px 8px;
+  background: #ecf0f1;
+  border-radius: 3px;
+  display: inline-block;
+}
+details[open] summary { background: #34495e; color: #fff; }
+
+.detail-box {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  background: #fcfcfc;
+  padding: 12px;
+  border: 1px solid #ddd;
+}
+.detail-box h4 { margin: 8px 0 4px; font-size: 12px; color: #555; text-transform: uppercase; }
+.detail-box p { margin: 0 0 8px; }
+.detail-box pre {
+  background: #f8f8f8;
+  padding: 8px;
+  border: 1px solid #eee;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: -apple-system, "PingFang SC", sans-serif;
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.send-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.send-form label {
+  display: block;
+  font-size: 12px;
+  color: #555;
+  font-weight: 600;
+}
+.send-form input,
+.send-form select,
+.send-form textarea {
+  width: 100%;
+  margin-top: 2px;
+  padding: 5px 7px;
+  font-size: 13px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  color: #222;
+  font-family: inherit;
+}
+.send-form textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.45;
+  resize: vertical;
+}
+.btn-send {
+  align-self: flex-start;
+  padding: 7px 16px;
+  background: #27ae60;
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.btn-send:hover { background: #219653; }
+.btn-send:disabled,
+.btn-send:disabled:hover {
+  background: #bdc3c7;
+  color: #f8f8f8;
+  cursor: not-allowed;
+}
+
+.send-log {
+  padding: 8px;
+  margin: 0 0 10px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-left: 3px solid #95a5a6;
+}
+.send-status {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #ecf0f1;
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
+}
+.send-status.send-sent { background: #27ae60; color: #fff; }
+.send-status.send-error { background: #e74c3c; color: #fff; }
+.edit-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.flag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #ecf0f1;
+  color: #666;
+  font-size: 11px;
+}
+.flag.edited {
+  background: #f9e79f;
+  color: #7d6608;
+  font-weight: 600;
+}
+.send-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #f5b7b1;
+  background: #fdecea;
+  color: #922b21;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.feedback-block form { display: flex; flex-direction: column; gap: 8px; }
+.feedback-block label { display: block; font-size: 12px; color: #555; }
+.feedback-block select, .feedback-block textarea {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 13px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-family: inherit;
+}
+.feedback-block fieldset.tags {
+  border: 1px solid #ddd;
+  padding: 4px 8px;
+  margin: 0;
+}
+.feedback-block fieldset.tags legend { font-size: 11px; color: #888; padding: 0 4px; }
+.feedback-block .tag-chk { display: inline-block; margin-right: 8px; font-size: 12px; }
+.feedback-block button {
+  align-self: flex-start;
+  padding: 6px 16px;
+  background: #2980b9;
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.feedback-block button:hover { background: #2471a3; }
+
+ul.history { list-style: none; padding: 0; margin: 4px 0 0; }
+ul.history li {
+  padding: 4px 6px;
+  border-left: 3px solid #ddd;
+  margin-bottom: 4px;
+  background: #fff;
+  font-size: 12px;
+}
+ul.history .tag-list { color: #666; font-size: 11px; margin-left: 6px; }
+ul.history .note { margin-top: 2px; color: #444; }

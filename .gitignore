@@ -1,0 +1,16 @@
+.env
+.env.bak.*
+.venv/
+__pycache__/
+*.pyc
+*.bak.*
+runs/
+secrets/
+replay.py
+工作日志/
+.DS_Store
+webui/feedback.db
+webui/.users.json
+webui/__pycache__/
+.claude/
+.codex/

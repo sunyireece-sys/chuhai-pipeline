@@ -1,0 +1,161 @@
+<tr id="row-{{ r.lead.slug }}" class="lead-row {% if r.latest %}has-feedback{% endif %}">
+  <td class="num">{{ r.lead.slug.split('-')[0] }}</td>
+  <td>
+    <div class="cname">{{ r.lead.display_name }}</div>
+    {% if r.lead.website %}
+      <a class="weblink" href="{{ r.lead.website }}" target="_blank" rel="noopener">{{ r.lead.website }}</a>
+    {% endif %}
+  </td>
+  <td>{{ r.lead.country }}</td>
+  <td><span class="rating r-{{ r.lead.rating }}">{{ r.lead.rating }}</span></td>
+  <td class="email">
+    {% if r.lead.email %}
+      <a href="mailto:{{ r.lead.email }}">{{ r.lead.email }}</a>
+    {% elif r.lead.phone %}
+      <span class="phone">📞 {{ r.lead.phone }}</span>
+    {% elif r.lead.has_contact_page %}
+      <span class="muted">仅有 contact page</span>
+    {% else %}
+      <span class="muted">—</span>
+    {% endif %}
+  </td>
+  <td class="subject">{{ truncate(r.lead.subject, 60) }}</td>
+  <td class="latest">
+    {% if r.latest %}
+      <span class="status status-{{ r.latest.status }}">{{ r.latest.status }}</span>
+      <div class="who">{{ r.latest.submitted_by }} · {{ r.latest.submitted_at[:16] }}</div>
+    {% else %}
+      <span class="muted">无</span>
+    {% endif %}
+  </td>
+  <td>
+    <details>
+      <summary>展开</summary>
+      <div class="detail-box">
+        <section class="profile-block">
+          <h4>公司介绍</h4>
+          <p>{{ r.lead.bio }}</p>
+          <h4>业务关联</h4>
+          <p>{{ r.lead.business_relevance }}</p>
+          <h4>邮件终稿 / Dry-run 发送</h4>
+          <form
+            class="send-form"
+            hx-post="/send"
+            hx-target="#row-{{ r.lead.slug }}"
+            hx-swap="outerHTML"
+          >
+            <input type="hidden" name="slug" value="{{ r.lead.slug }}">
+            <input type="hidden" name="run_id" value="{{ run_id }}">
+
+            <label>主题
+              <input type="text" name="subject" value="{{ r.lead.subject }}" required>
+            </label>
+
+            <label>邮件正文
+              <textarea name="body" rows="10" required>{{ r.lead.body }}</textarea>
+            </label>
+
+            <label>WhatsApp / LinkedIn
+              <textarea name="whatsapp" rows="4">{{ r.lead.whatsapp }}</textarea>
+            </label>
+
+            <label>Follow-up
+              <textarea name="follow_up" rows="6">{{ r.lead.follow_up }}</textarea>
+            </label>
+
+            <label>提交人
+              <select name="submitted_by" required>
+                <option value="">— 选 —</option>
+                {% for s in submitter_options %}
+                  <option value="{{ s }}">{{ s }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <button type="submit" class="btn-send"{% if not test_recipient %} disabled{% endif %}>
+              📤 Dry-run 发送到 {{ test_recipient or "(未配置 SMTP_TEST_RECIPIENT)" }}
+            </button>
+          </form>
+        </section>
+
+        <section class="feedback-block">
+          {% if r.latest_send %}
+            <h4>最近发送</h4>
+            <div class="send-log">
+              <span class="send-status send-{{ r.latest_send.send_status }}">{{ r.latest_send.send_status }}</span>
+              <span class="who">— {{ r.latest_send.submitted_by }} · {{ r.latest_send.submitted_at[:16] }} · {{ r.latest_send.mode }} → {{ r.latest_send.actual_to }}</span>
+              <div class="edit-flags">
+                <span class="flag {% if r.latest_send.subject_edited %}edited{% endif %}">主题{% if r.latest_send.subject_edited %} ✏️{% endif %}</span>
+                <span class="flag {% if r.latest_send.body_edited %}edited{% endif %}">正文{% if r.latest_send.body_edited %} ✏️{% endif %}</span>
+                <span class="flag {% if r.latest_send.whatsapp_edited %}edited{% endif %}">WA{% if r.latest_send.whatsapp_edited %} ✏️{% endif %}</span>
+                <span class="flag {% if r.latest_send.follow_up_edited %}edited{% endif %}">FU{% if r.latest_send.follow_up_edited %} ✏️{% endif %}</span>
+              </div>
+              {% if r.latest_send.send_error %}
+                <div class="send-error">{{ r.latest_send.send_error }}</div>
+              {% endif %}
+            </div>
+          {% endif %}
+
+          <h4>提交反馈</h4>
+          <form
+            hx-post="/feedback"
+            hx-target="#row-{{ r.lead.slug }}"
+            hx-swap="outerHTML"
+          >
+            <input type="hidden" name="slug" value="{{ r.lead.slug }}">
+            <input type="hidden" name="run_id" value="{{ run_id }}">
+
+            <label>状态
+              <select name="status" required>
+                <option value="">— 选 —</option>
+                {% for s in status_options %}
+                  <option value="{{ s }}">{{ s }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <fieldset class="tags">
+              <legend>标签（多选）</legend>
+              {% for t in tag_options %}
+                <label class="tag-chk">
+                  <input type="checkbox" name="tags" value="{{ t }}"> {{ t }}
+                </label>
+              {% endfor %}
+            </fieldset>
+
+            <label>备注
+              <textarea name="note" rows="3" maxlength="500" placeholder="可选，<=500 字"></textarea>
+            </label>
+
+            <label>提交人
+              <select name="submitted_by" required>
+                <option value="">— 选 —</option>
+                {% for s in submitter_options %}
+                  <option value="{{ s }}">{{ s }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <button type="submit">提交</button>
+          </form>
+
+          {% if r.history %}
+            <h4>历史反馈</h4>
+            <ul class="history">
+              {% for h in r.history %}
+                <li>
+                  <span class="status status-{{ h.status }}">{{ h.status }}</span>
+                  {% if h.tags %}
+                    <span class="tag-list">{{ h.tags|join(", ") }}</span>
+                  {% endif %}
+                  <span class="who">— {{ h.submitted_by }} · {{ h.submitted_at[:16] }}</span>
+                  {% if h.note %}<div class="note">{{ h.note }}</div>{% endif %}
+                </li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </section>
+      </div>
+    </details>
+  </td>
+</tr>
