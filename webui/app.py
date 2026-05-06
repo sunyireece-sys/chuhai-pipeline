@@ -34,7 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = REPO_ROOT / "runs"
 DEFAULT_RUN_ID = "2026-04-30"
 DB_PATH = Path(os.environ.get("FEEDBACK_DB_PATH") or (Path(__file__).resolve().parent / "feedback.db"))
-DRY_RUN_MODE = "dry-run"
+LIVE_MODE = "live"
 _SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 STATUS_OPTIONS = [
@@ -208,9 +208,6 @@ def _truncate(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _smtp_test_recipient() -> str:
-    return (os.environ.get("SMTP_TEST_RECIPIENT") or "").strip()
-
 
 def load_sales_leads(run_id: str) -> list[dict]:
     """Iterate profiles/*.json, return sales-mode entries with contact info."""
@@ -380,7 +377,7 @@ def _build_row_context(slug: str, run_id: str, leads: list[dict] | None = None) 
         "status_options": STATUS_OPTIONS,
         "tag_options": TAG_OPTIONS,
         "submitter_options": SUBMITTER_OPTIONS,
-        "test_recipient": _smtp_test_recipient(),
+
         "truncate": _truncate,
     }
 
@@ -415,7 +412,7 @@ def index(
             "status_options": STATUS_OPTIONS,
             "tag_options": TAG_OPTIONS,
             "submitter_options": SUBMITTER_OPTIONS,
-            "test_recipient": _smtp_test_recipient(),
+    
             "truncate": _truncate,
         },
     )
@@ -480,15 +477,14 @@ async def submit_send(
     if not original["subject"] or not original["body"]:
         return HTMLResponse("original outreach content not found", status_code=422)
 
-    test_recipient = _smtp_test_recipient()
     try:
-        config = load_send_config(live=False, test_recipient=test_recipient, sleep_s=0)
+        config = load_send_config(live=True, test_recipient="", sleep_s=0)
     except ConfigError as exc:
         return HTMLResponse(str(exc), status_code=422)
 
-    actual_to, dry_subject, dry_body = _build_message(
-        live=False,
-        test_recipient=config.test_recipient,
+    actual_to, final_subject, final_body = _build_message(
+        live=True,
+        test_recipient="",
         original_to=original_to,
         subject=subject,
         body=body,
@@ -509,8 +505,8 @@ async def submit_send(
                 config=config,
                 original_to=original_to,
                 actual_to=actual_to,
-                subject=dry_subject,
-                body=dry_body,
+                subject=final_subject,
+                body=final_body,
             ),
             config.smtp_pass,
         )
@@ -546,7 +542,7 @@ async def submit_send(
                 body_edited,
                 whatsapp_edited,
                 follow_up_edited,
-                DRY_RUN_MODE,
+                LIVE_MODE,
                 actual_to,
                 original_to,
                 send_status,
@@ -562,7 +558,7 @@ async def submit_send(
         {
             "timestamp": submitted_at,
             "slug": slug,
-            "mode": DRY_RUN_MODE,
+            "mode": LIVE_MODE,
             "original_to": original_to,
             "actual_to": actual_to,
             "subject": dry_subject,

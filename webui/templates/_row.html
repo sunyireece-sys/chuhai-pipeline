@@ -37,7 +37,7 @@
           <p>{{ r.lead.bio }}</p>
           <h4>业务关联</h4>
           <p>{{ r.lead.business_relevance }}</p>
-          <h4>邮件终稿 / Dry-run 发送</h4>
+          <h4>邮件终稿</h4>
           <form
             class="send-form"
             hx-post="/send"
@@ -72,8 +72,8 @@
               </select>
             </label>
 
-            <button type="submit" class="btn-send"{% if not test_recipient %} disabled{% endif %}>
-              📤 Dry-run 发送到 {{ test_recipient or "(未配置 SMTP_TEST_RECIPIENT)" }}
+            <button type="submit" class="btn-send">
+              📤 发送邮件
             </button>
           </form>
         </section>
