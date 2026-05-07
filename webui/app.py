@@ -11,10 +11,14 @@ import datetime as dt
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
 import sqlite3
+import threading
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +39,25 @@ from send_outreach import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = REPO_ROOT / "runs"
 DB_PATH = Path(os.environ.get("FEEDBACK_DB_PATH") or (Path(__file__).resolve().parent / "feedback.db"))
+
+
+def _imap_loop() -> None:
+    while True:
+        try:
+            from webui.imap_poller import poll_once
+
+            poll_once(DB_PATH)
+        except Exception as exc:
+            logging.warning("IMAP poll error: %s", exc)
+        time.sleep(600)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if os.environ.get("IMAP_HOST") or os.environ.get("SMTP_HOST"):
+        thread = threading.Thread(target=_imap_loop, daemon=True)
+        thread.start()
+    yield
 
 
 def list_available_runs() -> list[str]:
@@ -87,6 +110,7 @@ EDIT_CLASSIFICATIONS = {"content", "tone", "unclear"}
 
 app = FastAPI(
     title="Sales Feedback Demo",
+    lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
