@@ -812,6 +812,7 @@ def load_latest_send(slug: str, run_id: str) -> dict | None:
         "mode": row["mode"],
         "actual_to": row["actual_to"],
         "original_to": row["original_to"],
+        "message_id": row["message_id"] if "message_id" in row.keys() else "",
         "send_status": row["send_status"],
         "smtp_response": row["smtp_response"],
         "send_error": row["send_error"],
@@ -1082,18 +1083,17 @@ async def submit_send(
     send_status = "sent"
     smtp_response = None
     send_error = None
+    message_id = None
 
     try:
-        smtp_response = _redact_secret(
-            _send_message(
-                config=config,
-                original_to=send_to,
-                actual_to=actual_to,
-                subject=final_subject,
-                body=final_body,
-            ),
-            config.smtp_pass,
+        raw_smtp_response, message_id = _send_message(
+            config=config,
+            original_to=send_to,
+            actual_to=actual_to,
+            subject=final_subject,
+            body=final_body,
         )
+        smtp_response = _redact_secret(raw_smtp_response, config.smtp_pass)
     except Exception as exc:  # Record the failed attempt for audit and UI feedback.
         send_status = "error"
         send_error = _redact_secret(f"{type(exc).__name__}: {exc}", config.smtp_pass)
@@ -1106,10 +1106,10 @@ async def submit_send(
                 original_subject, original_body, original_whatsapp, original_follow_up,
                 sent_subject, sent_body, sent_whatsapp, sent_follow_up,
                 subject_edited, body_edited, whatsapp_edited, follow_up_edited,
-                mode, actual_to, original_to, send_status, smtp_response, send_error,
+                mode, actual_to, original_to, message_id, send_status, smtp_response, send_error,
                 submitted_by, submitted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 slug,
@@ -1129,6 +1129,7 @@ async def submit_send(
                 "dry-run" if dry_run else "live",
                 actual_to,
                 original_to,
+                message_id,
                 send_status,
                 smtp_response,
                 send_error,
@@ -1163,6 +1164,7 @@ async def submit_send(
             "mode": "dry-run" if dry_run else "live",
             "original_to": original_to,
             "actual_to": actual_to,
+            "message_id": message_id,
             "subject": final_subject,
             "status": send_status,
             "smtp_response": smtp_response,

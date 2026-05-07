@@ -15,7 +15,7 @@ import smtplib
 import time
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, make_msgid
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import urlparse
@@ -268,11 +268,14 @@ def _send_message(
     subject: str,
     body: str,
     smtp_factory: Callable[..., object] | None = None,
-) -> str:
+) -> tuple[str, str]:
     message = EmailMessage()
+    message_id_domain = config.smtp_user.split("@", 1)[1] if "@" in config.smtp_user else None
+    message_id = make_msgid(domain=message_id_domain)
     message["From"] = formataddr((SENDER_DISPLAY_NAME, config.smtp_user))
     message["To"] = actual_to
     message["Reply-To"] = config.smtp_user
+    message["Message-ID"] = message_id
     message["Subject"] = subject
     message.set_content(body)
 
@@ -285,8 +288,8 @@ def _send_message(
         smtp.login(config.smtp_user, config.smtp_pass)
         response = smtp.send_message(message)
     if response:
-        return json.dumps(response, ensure_ascii=False, default=str)
-    return "250 OK"
+        return json.dumps(response, ensure_ascii=False, default=str), message_id
+    return "250 OK", message_id
 
 
 def _build_message(*, live: bool, test_recipient: str, original_to: str, subject: str, body: str) -> tuple[str, str, str]:
@@ -401,7 +404,7 @@ def run_send(
             subject=send_subject,
         )
         try:
-            smtp_response = _send_message(
+            smtp_response, message_id = _send_message(
                 config=config,
                 original_to=original_to,
                 actual_to=actual_to,
@@ -416,6 +419,7 @@ def run_send(
                 {
                     **log_base,
                     "status": SENT_STATUS,
+                    "message_id": message_id,
                     "smtp_response": _redact_secret(smtp_response, config.smtp_pass),
                     "error": None,
                 },
