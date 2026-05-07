@@ -1022,6 +1022,86 @@ def get_received_replies(slug: str, run_id: str) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def _send_count(conn: sqlite3.Connection, submitted_by: str | None, start_date: str | None = None) -> int:
+    conditions = ["send_status = 'sent'"]
+    params: list[object] = []
+    if submitted_by:
+        conditions.append("submitted_by = ?")
+        params.append(submitted_by)
+    if start_date:
+        conditions.append("date(submitted_at) >= ?")
+        params.append(start_date)
+    sql = f"SELECT count(*) AS n FROM send_tracking WHERE {' AND '.join(conditions)}"
+    return int(conn.execute(sql, params).fetchone()["n"])
+
+
+def _sent_lead_keys(
+    conn: sqlite3.Connection,
+    submitted_by: str | None,
+    start_date: str | None = None,
+) -> list[sqlite3.Row]:
+    conditions = ["send_status = 'sent'"]
+    params: list[object] = []
+    if submitted_by:
+        conditions.append("submitted_by = ?")
+        params.append(submitted_by)
+    if start_date:
+        conditions.append("date(submitted_at) >= ?")
+        params.append(start_date)
+    sql = (
+        "SELECT DISTINCT profile_slug, run_id FROM send_tracking "
+        f"WHERE {' AND '.join(conditions)}"
+    )
+    return conn.execute(sql, params).fetchall()
+
+
+def _funnel_for_keys(conn: sqlite3.Connection, keys: list[sqlite3.Row]) -> dict:
+    funnel = {"已发": 0, "已收到有效回复": 0, "已成交": 0}
+    for key in keys:
+        row = conn.execute(
+            "SELECT effective_status FROM lead_status WHERE profile_slug = ? AND run_id = ?",
+            (key["profile_slug"], key["run_id"]),
+        ).fetchone()
+        status_value = row["effective_status"] if row else "已发"
+        if status_value in funnel:
+            funnel[status_value] += 1
+    denominator = funnel["已发"] + funnel["已收到有效回复"]
+    reply_rate = (funnel["已收到有效回复"] / denominator * 100) if denominator else 0
+    return {"counts": funnel, "valid_reply_rate": reply_rate}
+
+
+def _type_distribution() -> dict[str, int]:
+    counts = {t: 0 for t in CUSTOMER_TYPE_OPTIONS}
+    counts["未分类"] = 0
+    for lead in load_all_leads():
+        ctype = get_customer_type(lead["slug"], lead["run_id"])
+        value = ctype["type"] if ctype and ctype.get("type") else "未分类"
+        counts[value if value in counts else "未分类"] += 1
+    return counts
+
+
+def _type_pie_style(type_dist: dict[str, int]) -> str:
+    total = sum(type_dist.values())
+    if not total:
+        return "background:#ecf0f1"
+    colors = {
+        "分销商": "#3498db",
+        "品牌方": "#27ae60",
+        "工厂客户": "#f39c12",
+        "未分类": "#bdc3c7",
+    }
+    cursor = 0.0
+    stops = []
+    for label in ["分销商", "品牌方", "工厂客户", "未分类"]:
+        pct = type_dist.get(label, 0) / total * 100
+        if pct <= 0:
+            continue
+        start = cursor
+        cursor += pct
+        stops.append(f"{colors[label]} {start:.2f}% {cursor:.2f}%")
+    return f"background: conic-gradient({', '.join(stops)})"
+
+
 def load_latest_send(slug: str, run_id: str) -> dict | None:
     with _db() as conn:
         row = conn.execute(
@@ -1491,6 +1571,76 @@ async def submit_send(
     ctx["current_user"] = current_user
     ctx["current_user_display"] = submitted_by
     return templates.TemplateResponse("_row.html", ctx)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard(
+    request: Request,
+    user: str = "",
+    current_user: str = Depends(require_auth),
+) -> HTMLResponse:
+    current_user_display = _user_display_name(current_user)
+    is_admin = _user_is_admin(current_user)
+    if user == "all":
+        if not is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+        submitted_by_filter = None
+        scope_label = "全部人员"
+    else:
+        submitted_by_filter = current_user_display
+        scope_label = current_user_display
+
+    today = dt.date.today()
+    week_start = today - dt.timedelta(days=today.weekday())
+    today_s = today.isoformat()
+    week_start_s = week_start.isoformat()
+
+    with _db() as conn:
+        sends_today = _send_count(conn, submitted_by_filter, today_s)
+        sends_week = _send_count(conn, submitted_by_filter, week_start_s)
+        sends_total = _send_count(conn, submitted_by_filter)
+        funnel_week = _funnel_for_keys(
+            conn,
+            _sent_lead_keys(conn, submitted_by_filter, week_start_s),
+        )
+        funnel_total = _funnel_for_keys(conn, _sent_lead_keys(conn, submitted_by_filter))
+        people = []
+        if user == "all":
+            rows = conn.execute(
+                """
+                SELECT submitted_by,
+                       SUM(CASE WHEN date(submitted_at) = ? THEN 1 ELSE 0 END) AS sends_today,
+                       SUM(CASE WHEN date(submitted_at) >= ? THEN 1 ELSE 0 END) AS sends_week,
+                       count(*) AS sends_total
+                FROM send_tracking
+                WHERE send_status = 'sent'
+                GROUP BY submitted_by
+                ORDER BY sends_total DESC, submitted_by
+                """,
+                (today_s, week_start_s),
+            ).fetchall()
+            people = [dict(row) for row in rows]
+
+    type_dist = _type_distribution()
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "current_user": current_user,
+            "current_user_display": current_user_display,
+            "current_user_is_admin": is_admin,
+            "scope_label": scope_label,
+            "showing_all": user == "all",
+            "sends_today": sends_today,
+            "sends_week": sends_week,
+            "sends_total": sends_total,
+            "funnel_week": funnel_week,
+            "funnel_total": funnel_total,
+            "type_dist": type_dist,
+            "type_pie_style": _type_pie_style(type_dist),
+            "people": people,
+        },
+    )
 
 
 @app.get("/admin", response_class=HTMLResponse)

@@ -295,3 +295,84 @@ ul.history li {
 }
 ul.history .tag-list { color: #666; font-size: 11px; margin-left: 6px; }
 ul.history .note { margin-top: 2px; color: #444; }
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.metric-card,
+.dash-panel {
+  background: #fff;
+  border: 1px solid #ddd;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.metric-card { padding: 14px; }
+.metric-label { color: #777; font-size: 12px; }
+.metric-value { font-size: 30px; font-weight: 700; margin-top: 4px; }
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.dash-panel { padding: 14px; margin-bottom: 12px; }
+.dash-panel h2 { margin: 0 0 10px; font-size: 16px; }
+.funnel-row {
+  display: grid;
+  grid-template-columns: 96px 1fr 42px;
+  gap: 8px;
+  align-items: center;
+  margin: 8px 0;
+}
+.funnel-label { color: #555; }
+.funnel-bar {
+  height: 14px;
+  background: #ecf0f1;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.funnel-bar span {
+  display: block;
+  height: 100%;
+  background: #3498db;
+}
+.funnel-count {
+  text-align: right;
+  color: #555;
+  font-variant-numeric: tabular-nums;
+}
+.rate-line { margin-top: 10px; color: #555; font-weight: 600; }
+.type-chart-wrap {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.type-pie {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  border: 1px solid #ddd;
+  flex: 0 0 auto;
+}
+.type-legend { line-height: 1.9; color: #555; }
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  background: #bdc3c7;
+}
+.type-legend div:nth-child(1) .legend-dot { background: #3498db; }
+.type-legend div:nth-child(2) .legend-dot { background: #27ae60; }
+.type-legend div:nth-child(3) .legend-dot { background: #f39c12; }
+.type-legend div:nth-child(4) .legend-dot { background: #bdc3c7; }
+
+@media (max-width: 800px) {
+  .metric-grid,
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
