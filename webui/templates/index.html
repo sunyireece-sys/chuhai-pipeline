@@ -12,7 +12,6 @@
   <div class="meta">
     共 {{ rows|length }} 家公司
     {% if current_user_display %} · 欢迎，<strong>{{ current_user_display }}</strong>{% endif %}
-    · <a href="/dashboard">Dashboard</a>
     {% if current_user_is_admin %} · <a href="/admin">Admin</a>{% endif %}
   </div>
   <div class="meta">
@@ -25,6 +24,11 @@
 </header>
 
 <main>
+  <details class="dashboard-panel" open>
+    <summary>📊 我的 Dashboard</summary>
+    {% include "_dashboard_panel.html" with context %}
+  </details>
+
   <table class="leads">
     <thead>
       <tr>

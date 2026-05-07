@@ -1234,6 +1234,69 @@ def _build_row_context(
     }
 
 
+def _dashboard_payload(
+    current_user: str,
+    user: str = "",
+    include_admin_people: bool = False,
+) -> dict:
+    current_user_display = _user_display_name(current_user)
+    is_admin = _user_is_admin(current_user)
+    showing_all = user == "all"
+    if showing_all:
+        if not is_admin:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+        submitted_by_filter = None
+        scope_label = "全部人员"
+    else:
+        submitted_by_filter = current_user_display
+        scope_label = current_user_display
+
+    today = dt.date.today()
+    week_start = today - dt.timedelta(days=today.weekday())
+    today_s = today.isoformat()
+    week_start_s = week_start.isoformat()
+
+    with _db() as conn:
+        sends_today = _send_count(conn, submitted_by_filter, today_s)
+        sends_week = _send_count(conn, submitted_by_filter, week_start_s)
+        sends_total = _send_count(conn, submitted_by_filter)
+        funnel_week = _funnel_for_keys(
+            conn,
+            _sent_lead_keys(conn, submitted_by_filter, week_start_s),
+        )
+        funnel_total = _funnel_for_keys(conn, _sent_lead_keys(conn, submitted_by_filter))
+        people = []
+        if showing_all or (include_admin_people and is_admin):
+            rows = conn.execute(
+                """
+                SELECT submitted_by,
+                       SUM(CASE WHEN date(submitted_at) = ? THEN 1 ELSE 0 END) AS sends_today,
+                       SUM(CASE WHEN date(submitted_at) >= ? THEN 1 ELSE 0 END) AS sends_week,
+                       count(*) AS sends_total
+                FROM send_tracking
+                WHERE send_status = 'sent'
+                GROUP BY submitted_by
+                ORDER BY sends_total DESC, submitted_by
+                """,
+                (today_s, week_start_s),
+            ).fetchall()
+            people = [dict(row) for row in rows]
+
+    type_dist = _type_distribution()
+    return {
+        "scope_label": scope_label,
+        "showing_all": showing_all,
+        "sends_today": sends_today,
+        "sends_week": sends_week,
+        "sends_total": sends_total,
+        "funnel_week": funnel_week,
+        "funnel_total": funnel_total,
+        "type_dist": type_dist,
+        "type_pie_style": _type_pie_style(type_dist),
+        "people": people,
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(
     request: Request,
@@ -1270,6 +1333,7 @@ def index(
                 "received_replies": received_replies,
             }
         )
+    dash = _dashboard_payload(current_user, include_admin_people=True)
     return templates.TemplateResponse(
         "index.html",
         {
@@ -1285,6 +1349,14 @@ def index(
             "tag_options": TAG_OPTIONS,
             "send_mode": "dry-run" if _is_dry_run() else "live",
             "truncate": _truncate,
+            "dash_sends_today": dash["sends_today"],
+            "dash_sends_week": dash["sends_week"],
+            "dash_sends_total": dash["sends_total"],
+            "dash_funnel_week": dash["funnel_week"],
+            "dash_funnel_total": dash["funnel_total"],
+            "dash_type_dist": dash["type_dist"],
+            "dash_type_pie_style": dash["type_pie_style"],
+            "dash_people": dash["people"],
         },
     )
 
@@ -1581,47 +1653,7 @@ def dashboard(
 ) -> HTMLResponse:
     current_user_display = _user_display_name(current_user)
     is_admin = _user_is_admin(current_user)
-    if user == "all":
-        if not is_admin:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
-        submitted_by_filter = None
-        scope_label = "全部人员"
-    else:
-        submitted_by_filter = current_user_display
-        scope_label = current_user_display
-
-    today = dt.date.today()
-    week_start = today - dt.timedelta(days=today.weekday())
-    today_s = today.isoformat()
-    week_start_s = week_start.isoformat()
-
-    with _db() as conn:
-        sends_today = _send_count(conn, submitted_by_filter, today_s)
-        sends_week = _send_count(conn, submitted_by_filter, week_start_s)
-        sends_total = _send_count(conn, submitted_by_filter)
-        funnel_week = _funnel_for_keys(
-            conn,
-            _sent_lead_keys(conn, submitted_by_filter, week_start_s),
-        )
-        funnel_total = _funnel_for_keys(conn, _sent_lead_keys(conn, submitted_by_filter))
-        people = []
-        if user == "all":
-            rows = conn.execute(
-                """
-                SELECT submitted_by,
-                       SUM(CASE WHEN date(submitted_at) = ? THEN 1 ELSE 0 END) AS sends_today,
-                       SUM(CASE WHEN date(submitted_at) >= ? THEN 1 ELSE 0 END) AS sends_week,
-                       count(*) AS sends_total
-                FROM send_tracking
-                WHERE send_status = 'sent'
-                GROUP BY submitted_by
-                ORDER BY sends_total DESC, submitted_by
-                """,
-                (today_s, week_start_s),
-            ).fetchall()
-            people = [dict(row) for row in rows]
-
-    type_dist = _type_distribution()
+    dash = _dashboard_payload(current_user, user=user)
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -1629,16 +1661,16 @@ def dashboard(
             "current_user": current_user,
             "current_user_display": current_user_display,
             "current_user_is_admin": is_admin,
-            "scope_label": scope_label,
-            "showing_all": user == "all",
-            "sends_today": sends_today,
-            "sends_week": sends_week,
-            "sends_total": sends_total,
-            "funnel_week": funnel_week,
-            "funnel_total": funnel_total,
-            "type_dist": type_dist,
-            "type_pie_style": _type_pie_style(type_dist),
-            "people": people,
+            "scope_label": dash["scope_label"],
+            "showing_all": dash["showing_all"],
+            "dash_sends_today": dash["sends_today"],
+            "dash_sends_week": dash["sends_week"],
+            "dash_sends_total": dash["sends_total"],
+            "dash_funnel_week": dash["funnel_week"],
+            "dash_funnel_total": dash["funnel_total"],
+            "dash_type_dist": dash["type_dist"],
+            "dash_type_pie_style": dash["type_pie_style"],
+            "dash_people": dash["people"],
         },
     )
 

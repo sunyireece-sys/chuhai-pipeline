@@ -22,78 +22,7 @@
 </header>
 
 <main>
-  <section class="metric-grid">
-    <div class="metric-card">
-      <div class="metric-label">今日发送</div>
-      <div class="metric-value">{{ sends_today }}</div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-label">本周发送</div>
-      <div class="metric-value">{{ sends_week }}</div>
-    </div>
-    <div class="metric-card">
-      <div class="metric-label">累计发送</div>
-      <div class="metric-value">{{ sends_total }}</div>
-    </div>
-  </section>
-
-  <section class="dashboard-grid">
-    {% for title, funnel in [("本周漏斗", funnel_week), ("累计漏斗", funnel_total)] %}
-      {% set total = funnel.counts.values()|sum %}
-      <section class="dash-panel">
-        <h2>{{ title }}</h2>
-        {% for label, count in funnel.counts.items() %}
-          {% set width = (count / total * 100) if total else 0 %}
-          <div class="funnel-row">
-            <div class="funnel-label">{{ label }}</div>
-            <div class="funnel-bar">
-              <span style="width: {{ width }}%"></span>
-            </div>
-            <div class="funnel-count">{{ count }}</div>
-          </div>
-        {% endfor %}
-        <div class="rate-line">有效回复率 {{ "%.1f"|format(funnel.valid_reply_rate) }}%</div>
-      </section>
-    {% endfor %}
-  </section>
-
-  <section class="dash-panel">
-    <h2>客户类型分布</h2>
-    <div class="type-chart-wrap">
-      <div class="type-pie" style="{{ type_pie_style }}"></div>
-      <div class="type-legend">
-        {% for label, count in type_dist.items() %}
-          <div><span class="legend-dot legend-{{ label }}"></span>{{ label }}：{{ count }}</div>
-        {% endfor %}
-      </div>
-    </div>
-  </section>
-
-  {% if people %}
-    <section class="dash-panel">
-      <h2>按人员</h2>
-      <table class="leads">
-        <thead>
-          <tr>
-            <th>人员</th>
-            <th>今日</th>
-            <th>本周</th>
-            <th>累计</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for p in people %}
-            <tr>
-              <td>{{ p.submitted_by }}</td>
-              <td>{{ p.sends_today }}</td>
-              <td>{{ p.sends_week }}</td>
-              <td>{{ p.sends_total }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-  {% endif %}
+  {% include "_dashboard_panel.html" with context %}
 </main>
 </body>
 </html>
