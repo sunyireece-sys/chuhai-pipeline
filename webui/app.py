@@ -34,7 +34,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = REPO_ROOT / "runs"
 DEFAULT_RUN_ID = "2026-04-30"
 DB_PATH = Path(os.environ.get("FEEDBACK_DB_PATH") or (Path(__file__).resolve().parent / "feedback.db"))
-LIVE_MODE = "live"
+def _is_dry_run() -> bool:
+    return os.environ.get("SEND_MODE", "live").strip().lower() == "dry-run"
 _SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 STATUS_OPTIONS = [
@@ -377,7 +378,7 @@ def _build_row_context(slug: str, run_id: str, leads: list[dict] | None = None) 
         "status_options": STATUS_OPTIONS,
         "tag_options": TAG_OPTIONS,
         "submitter_options": SUBMITTER_OPTIONS,
-
+        "send_mode": "dry-run" if _is_dry_run() else "live",
         "truncate": _truncate,
     }
 
@@ -412,7 +413,7 @@ def index(
             "status_options": STATUS_OPTIONS,
             "tag_options": TAG_OPTIONS,
             "submitter_options": SUBMITTER_OPTIONS,
-    
+            "send_mode": "dry-run" if _is_dry_run() else "live",
             "truncate": _truncate,
         },
     )
@@ -477,14 +478,16 @@ async def submit_send(
     if not original["subject"] or not original["body"]:
         return HTMLResponse("original outreach content not found", status_code=422)
 
+    dry_run = _is_dry_run()
+    test_recipient = (os.environ.get("SMTP_TEST_RECIPIENT") or "").strip() if dry_run else ""
     try:
-        config = load_send_config(live=True, test_recipient="", sleep_s=0)
+        config = load_send_config(live=not dry_run, test_recipient=test_recipient, sleep_s=0)
     except ConfigError as exc:
         return HTMLResponse(str(exc), status_code=422)
 
     actual_to, final_subject, final_body = _build_message(
-        live=True,
-        test_recipient="",
+        live=not dry_run,
+        test_recipient=test_recipient,
         original_to=original_to,
         subject=subject,
         body=body,
@@ -542,7 +545,7 @@ async def submit_send(
                 body_edited,
                 whatsapp_edited,
                 follow_up_edited,
-                LIVE_MODE,
+                "dry-run" if dry_run else "live",
                 actual_to,
                 original_to,
                 send_status,
@@ -558,10 +561,10 @@ async def submit_send(
         {
             "timestamp": submitted_at,
             "slug": slug,
-            "mode": LIVE_MODE,
+            "mode": "dry-run" if dry_run else "live",
             "original_to": original_to,
             "actual_to": actual_to,
-            "subject": dry_subject,
+            "subject": final_subject,
             "status": send_status,
             "smtp_response": smtp_response,
             "error": send_error,

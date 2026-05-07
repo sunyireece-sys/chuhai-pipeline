@@ -72,8 +72,8 @@
               </select>
             </label>
 
-            <button type="submit" class="btn-send">
-              📤 发送邮件
+            <button type="submit" class="btn-send {% if send_mode == 'dry-run' %}btn-dryrun{% endif %}">
+              {% if send_mode == 'dry-run' %}🧪 Dry-run 发送{% else %}📤 发送邮件{% endif %}
             </button>
           </form>
         </section>

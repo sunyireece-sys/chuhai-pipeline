@@ -133,6 +133,8 @@ details[open] summary { background: #34495e; color: #fff; }
   font-weight: 600;
 }
 .btn-send:hover { background: #219653; }
+.btn-dryrun { background: #8e44ad; }
+.btn-dryrun:hover { background: #7d3c98; }
 .btn-send:disabled,
 .btn-send:disabled:hover {
   background: #bdc3c7;
