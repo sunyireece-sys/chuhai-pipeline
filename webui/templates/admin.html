@@ -14,6 +14,7 @@
 </header>
 
 <main>
+  <h2>用户账号</h2>
   <table class="leads">
     <thead>
       <tr>
@@ -40,6 +41,55 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <h2>内容问题（待复查）</h2>
+  {% if content_flags %}
+    <table class="leads">
+      <thead>
+        <tr>
+          <th>时间</th>
+          <th>公司</th>
+          <th>字段</th>
+          <th>提交人</th>
+          <th>原文</th>
+          <th>改后</th>
+          <th>AI 说明</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for flag in content_flags %}
+          <tr>
+            <td>{{ flag.flagged_at[:16] }}</td>
+            <td>{{ flag.profile_slug }}</td>
+            <td>{{ flag.field }}</td>
+            <td>{{ flag.submitted_by }}</td>
+            <td>
+              <details>
+                <summary>查看原文</summary>
+                <pre>{{ flag.original_text }}</pre>
+              </details>
+            </td>
+            <td>
+              <details>
+                <summary>查看改后</summary>
+                <pre>{{ flag.edited_text }}</pre>
+              </details>
+            </td>
+            <td>{{ flag.reasoning }}</td>
+            <td>
+              <form method="post" action="/admin/resolve-flag">
+                <input type="hidden" name="flag_id" value="{{ flag.id }}">
+                <button type="submit">标记已处理</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="meta">暂无待复查内容问题。</p>
+  {% endif %}
 </main>
 </body>
 </html>

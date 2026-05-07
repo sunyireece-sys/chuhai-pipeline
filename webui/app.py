@@ -18,7 +18,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
@@ -64,6 +64,7 @@ INITIAL_USERS = [
     ("jeff", "Jeff", 0),
     ("admin", "Admin", 1),
 ]
+EDIT_CLASSIFICATIONS = {"content", "tone", "unclear"}
 
 
 app = FastAPI(
@@ -196,6 +197,67 @@ def _init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS edit_classifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                send_id INTEGER NOT NULL,
+                profile_slug TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                field TEXT NOT NULL,
+                original_text TEXT NOT NULL,
+                edited_text TEXT NOT NULL,
+                classification TEXT NOT NULL,
+                reasoning TEXT NOT NULL DEFAULT '',
+                username TEXT NOT NULL,
+                classified_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_edit_class_send "
+            "ON edit_classifications(send_id)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS content_flags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                classification_id INTEGER NOT NULL,
+                profile_slug TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                field TEXT NOT NULL,
+                original_text TEXT NOT NULL,
+                edited_text TEXT NOT NULL,
+                reasoning TEXT NOT NULL,
+                submitted_by TEXT NOT NULL,
+                flagged_at TEXT NOT NULL,
+                resolved INTEGER NOT NULL DEFAULT 0,
+                resolved_at TEXT,
+                resolved_by TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_content_flags_unresolved "
+            "ON content_flags(resolved, flagged_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tone_examples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                field TEXT NOT NULL,
+                original_text TEXT NOT NULL,
+                edited_text TEXT NOT NULL,
+                profile_slug TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tone_examples_user "
+            "ON tone_examples(username, field)"
+        )
         _seed_initial_users(conn)
 
 
@@ -253,6 +315,133 @@ def _user_is_admin(username: str) -> bool:
             (username,),
         ).fetchone()
     return bool(row and row["is_admin"])
+
+
+def _llm_classify_edit(field: str, original: str, edited: str) -> dict:
+    api_key = (
+        os.environ.get("LLM_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("GLM_API_KEY")
+        or ""
+    ).strip()
+    if not api_key:
+        return {"classification": "unclear", "reasoning": "LLM_API_KEY not set"}
+
+    prompt = (
+        "你是一个邮件编辑意图分类助手。\n\n"
+        f"邮件字段：{field}\n\n"
+        f"AI 原文：\n{original}\n\n"
+        f"人工改后：\n{edited}\n\n"
+        "请判断这次改动属于：\n"
+        "- content：原文有事实错误、关联性不对、信息不准确，需要人工复查\n"
+        "- tone：内容没有问题，只是措辞风格、语气或落款不同，是个人习惯\n"
+        "- unclear：无法判断\n\n"
+        '只返回 JSON：{"classification": "content 或 tone 或 unclear", "reasoning": "一句话说明"}'
+    )
+
+    try:
+        from openai import OpenAI
+
+        client_kwargs: dict = {"api_key": api_key}
+        base_url = (os.environ.get("LLM_BASE_URL") or "").strip()
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client_kwargs["timeout"] = float(os.environ.get("LLM_TIMEOUT_SECONDS", "30"))
+        client = OpenAI(**client_kwargs)
+        response = client.chat.completions.create(
+            model=os.environ.get("LLM_MODEL", "gpt-4o-mini"),
+            response_format={"type": "json_object"},
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0,
+        )
+        payload = json.loads(response.choices[0].message.content or "{}")
+    except Exception as exc:
+        reason = str(exc).replace(api_key, "***")
+        return {"classification": "unclear", "reasoning": _truncate(f"error: {reason}", 1000)}
+
+    classification = str(payload.get("classification") or "unclear").strip().lower()
+    if classification not in EDIT_CLASSIFICATIONS:
+        classification = "unclear"
+    reasoning = str(payload.get("reasoning") or "").strip()
+    return {"classification": classification, "reasoning": _truncate(reasoning, 1000)}
+
+
+def _classify_and_store_edits(
+    send_id: int,
+    profile_slug: str,
+    run_id: str,
+    username: str,
+    submitted_by: str,
+    edits: dict,
+) -> None:
+    for field, (original, edited, was_edited) in edits.items():
+        original = str(original or "")
+        edited = str(edited or "")
+        if not was_edited or not original.strip() or not edited.strip():
+            continue
+
+        result = _llm_classify_edit(field, original, edited)
+        classification = str(result.get("classification") or "unclear").strip().lower()
+        if classification not in EDIT_CLASSIFICATIONS:
+            classification = "unclear"
+        reasoning = str(result.get("reasoning") or "").strip()
+        now = dt.datetime.now().isoformat(timespec="seconds")
+
+        with _db() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO edit_classifications (
+                    send_id, profile_slug, run_id, field, original_text, edited_text,
+                    classification, reasoning, username, classified_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    send_id,
+                    profile_slug,
+                    run_id,
+                    field,
+                    original,
+                    edited,
+                    classification,
+                    reasoning,
+                    username,
+                    now,
+                ),
+            )
+            classification_id = cursor.lastrowid
+            if classification == "content":
+                conn.execute(
+                    """
+                    INSERT INTO content_flags (
+                        classification_id, profile_slug, run_id, field, original_text,
+                        edited_text, reasoning, submitted_by, flagged_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        classification_id,
+                        profile_slug,
+                        run_id,
+                        field,
+                        original,
+                        edited,
+                        reasoning,
+                        submitted_by,
+                        now,
+                    ),
+                )
+            elif classification == "tone":
+                conn.execute(
+                    """
+                    INSERT INTO tone_examples (
+                        username, field, original_text, edited_text, profile_slug, recorded_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (username, field, original, edited, profile_slug, now),
+                )
 
 
 def _read_json(path: Path) -> dict:
@@ -546,6 +735,7 @@ async def submit_feedback(
 @app.post("/send", response_class=HTMLResponse)
 async def submit_send(
     request: Request,
+    background_tasks: BackgroundTasks,
     current_user: str = Depends(require_auth),
 ) -> HTMLResponse:
     form = await request.form()
@@ -611,7 +801,7 @@ async def submit_send(
         send_error = _redact_secret(f"{type(exc).__name__}: {exc}", config.smtp_pass)
 
     with _db() as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO send_tracking (
                 profile_slug, run_id,
@@ -647,6 +837,24 @@ async def submit_send(
                 submitted_by,
                 submitted_at,
             ),
+        )
+        send_id = int(cursor.lastrowid)
+
+    edited_fields = {
+        "subject": (original["subject"], subject, subject_edited),
+        "body": (original["body"], body, body_edited),
+        "whatsapp": (original["whatsapp"], whatsapp, whatsapp_edited),
+        "follow_up": (original["follow_up"], follow_up, follow_up_edited),
+    }
+    if any(was_edited for _, _, was_edited in edited_fields.values()):
+        background_tasks.add_task(
+            _classify_and_store_edits,
+            send_id=send_id,
+            profile_slug=slug,
+            run_id=run_id,
+            username=current_user,
+            submitted_by=submitted_by,
+            edits=edited_fields,
         )
 
     _append_send_log(
@@ -690,11 +898,15 @@ def admin_page(
         users = conn.execute(
             "SELECT username, display_name, is_admin FROM users ORDER BY id"
         ).fetchall()
+        content_flags = conn.execute(
+            "SELECT * FROM content_flags WHERE resolved = 0 ORDER BY flagged_at DESC"
+        ).fetchall()
     return templates.TemplateResponse(
         "admin.html",
         {
             "request": request,
             "users": users,
+            "content_flags": content_flags,
             "current_user": current_user,
             "current_user_display": _user_display_name(current_user),
         },
@@ -721,4 +933,32 @@ async def change_password(
         )
     if cursor.rowcount < 1:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/resolve-flag")
+async def resolve_flag(
+    request: Request,
+    admin: str = Depends(require_admin),
+) -> RedirectResponse:
+    form = await request.form()
+    try:
+        flag_id = int(form.get("flag_id") or 0)
+    except ValueError:
+        flag_id = 0
+    if flag_id < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="flag_id required")
+
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    with _db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE content_flags
+            SET resolved = 1, resolved_at = ?, resolved_by = ?
+            WHERE id = ?
+            """,
+            (now, admin, flag_id),
+        )
+    if cursor.rowcount < 1:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Flag not found")
     return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
