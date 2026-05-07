@@ -133,6 +133,78 @@ def _verify_password(password: str, stored: str) -> bool:
     return secrets.compare_digest(dk, check)
 
 
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, ddl: str) -> None:
+    if column_name not in _table_columns(conn, table_name):
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {ddl}")
+
+
+def _map_feedback_status_to_manual(status_value: str) -> str | None:
+    status_value = str(status_value or "").strip()
+    if status_value in {"", "未发", EXCLUDED_STATUS}:
+        return None
+    if status_value == "已发待回":
+        return "已发"
+    if status_value == "已回":
+        return "已收到有效回复"
+    return status_value
+
+
+def _migrate_lead_status(conn: sqlite3.Connection) -> None:
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    keys = {
+        (row["profile_slug"], row["run_id"])
+        for row in conn.execute("SELECT DISTINCT profile_slug, run_id FROM feedback")
+    }
+    keys.update(
+        (row["profile_slug"], row["run_id"])
+        for row in conn.execute("SELECT DISTINCT profile_slug, run_id FROM send_tracking")
+    )
+
+    for slug, run_id in sorted(keys):
+        sent_row = conn.execute(
+            """
+            SELECT submitted_at FROM send_tracking
+            WHERE profile_slug = ? AND run_id = ? AND send_status = 'sent'
+            ORDER BY submitted_at DESC, id DESC LIMIT 1
+            """,
+            (slug, run_id),
+        ).fetchone()
+        auto_status = "已发" if sent_row else "未发"
+        latest_feedback = conn.execute(
+            """
+            SELECT status, submitted_at FROM feedback
+            WHERE profile_slug = ? AND run_id = ?
+            ORDER BY submitted_at DESC, id DESC LIMIT 1
+            """,
+            (slug, run_id),
+        ).fetchone()
+        manual_status = (
+            _map_feedback_status_to_manual(latest_feedback["status"])
+            if latest_feedback
+            else None
+        )
+        effective_status = manual_status or auto_status
+        updated_at = (
+            latest_feedback["submitted_at"]
+            if latest_feedback
+            else (sent_row["submitted_at"] if sent_row else now)
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO lead_status (
+                profile_slug, run_id, auto_status, manual_status, effective_status, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (slug, run_id, auto_status, manual_status, effective_status, updated_at),
+        )
+
+
 def _seed_initial_users(conn: sqlite3.Connection) -> None:
     initial_password = _initial_user_password()
     if not initial_password:
@@ -191,6 +263,7 @@ def _init_db() -> None:
                 mode TEXT NOT NULL,
                 actual_to TEXT NOT NULL,
                 original_to TEXT NOT NULL,
+                message_id TEXT,
                 send_status TEXT NOT NULL,
                 smtp_response TEXT,
                 send_error TEXT,
@@ -202,6 +275,90 @@ def _init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_send_slug_run "
             "ON send_tracking(profile_slug, run_id, submitted_at DESC)"
+        )
+        _ensure_column(conn, "send_tracking", "message_id", "message_id TEXT")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS received_replies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                imap_uid TEXT NOT NULL,
+                message_id TEXT,
+                in_reply_to TEXT,
+                profile_slug TEXT,
+                run_id TEXT,
+                received_at TEXT NOT NULL,
+                from_email TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                body_text TEXT NOT NULL DEFAULT '',
+                match_method TEXT NOT NULL DEFAULT 'unmatched',
+                llm_verdict TEXT,
+                llm_reasoning TEXT,
+                judged_at TEXT,
+                UNIQUE(imap_uid)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_replies_slug "
+            "ON received_replies(profile_slug, run_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_replies_from "
+            "ON received_replies(from_email)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS lead_status (
+                profile_slug TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                auto_status TEXT NOT NULL DEFAULT '未发',
+                manual_status TEXT,
+                effective_status TEXT NOT NULL DEFAULT '未发',
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (profile_slug, run_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS status_change_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_slug TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                changed_at TEXT NOT NULL,
+                changed_by TEXT NOT NULL,
+                from_status TEXT,
+                to_status TEXT NOT NULL,
+                source TEXT NOT NULL,
+                reason TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS customer_type (
+                profile_slug TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                type TEXT,
+                source TEXT NOT NULL DEFAULT 'manual',
+                assigned_by TEXT,
+                assigned_at TEXT,
+                PRIMARY KEY (profile_slug, run_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS customer_type_change_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                profile_slug TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                changed_at TEXT NOT NULL,
+                changed_by TEXT NOT NULL,
+                from_type TEXT,
+                to_type TEXT
+            )
+            """
         )
         conn.execute(
             """
@@ -277,6 +434,7 @@ def _init_db() -> None:
             "ON tone_examples(username, field)"
         )
         _seed_initial_users(conn)
+        _migrate_lead_status(conn)
 
 
 _init_db()
