@@ -488,8 +488,12 @@ def _truncate(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def _sender_text(text: object, sender_name: str) -> str:
+    value = str(text or "")
+    return value.replace("Nicky", sender_name) if sender_name else value
 
-def load_sales_leads(run_id: str) -> list[dict]:
+
+def load_sales_leads(run_id: str, sender_name: str = "") -> list[dict]:
     """Iterate profiles/*.json, return sales-mode entries with contact info."""
     output_dir = _run_output_dir(run_id)
     if output_dir is None:
@@ -524,10 +528,22 @@ def load_sales_leads(run_id: str) -> list[dict]:
                 "email": emails[0] if emails else "",
                 "phone": phones[0] if phones else "",
                 "has_contact_page": "Yes" if contact_pages else "",
-                "subject": outreach.get("cold_email_subject", ""),
-                "body": outreach.get("cold_email_body", ""),
-                "whatsapp": outreach.get("whatsapp_or_linkedin_message", ""),
-                "follow_up": outreach.get("follow_up_email", ""),
+                "subject": _sender_text(
+                    outreach.get("cold_email_subject", ""),
+                    sender_name,
+                ),
+                "body": _sender_text(
+                    outreach.get("cold_email_body", ""),
+                    sender_name,
+                ),
+                "whatsapp": _sender_text(
+                    outreach.get("whatsapp_or_linkedin_message", ""),
+                    sender_name,
+                ),
+                "follow_up": _sender_text(
+                    outreach.get("follow_up_email", ""),
+                    sender_name,
+                ),
                 "bio": body.get("bio_cn", ""),
                 "business_relevance": body.get("business_relevance_cn", ""),
             }
@@ -638,8 +654,16 @@ def _append_send_log(run_id: str, record: dict) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def _build_row_context(slug: str, run_id: str, leads: list[dict] | None = None) -> dict:
-    leads = leads if leads is not None else load_sales_leads(run_id)
+def _build_row_context(
+    slug: str,
+    run_id: str,
+    leads: list[dict] | None = None,
+    sender_name: str = "",
+) -> dict:
+    leads = leads if leads is not None else load_sales_leads(
+        run_id,
+        sender_name=sender_name,
+    )
     lead = next((l for l in leads if l["slug"] == slug), None)
     if lead is None:
         return {}
@@ -667,7 +691,8 @@ def index(
     run: str = DEFAULT_RUN_ID,
     current_user: str = Depends(require_auth),
 ) -> HTMLResponse:
-    leads = load_sales_leads(run)
+    current_user_display = _user_display_name(current_user)
+    leads = load_sales_leads(run, sender_name=current_user_display)
     enriched = []
     for lead in leads:
         latest = load_latest_feedback(lead["slug"], run)
@@ -688,7 +713,7 @@ def index(
             "rows": enriched,
             "run_id": run,
             "current_user": current_user,
-            "current_user_display": _user_display_name(current_user),
+            "current_user_display": current_user_display,
             "current_user_is_admin": _user_is_admin(current_user),
             "status_options": STATUS_OPTIONS,
             "tag_options": TAG_OPTIONS,
@@ -723,12 +748,12 @@ async def submit_feedback(
              note, submitted_by, submitted_at),
         )
 
-    ctx = _build_row_context(slug, run_id)
+    ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
     if not ctx:
         return HTMLResponse("profile not found", status_code=404)
     ctx["request"] = request
     ctx["current_user"] = current_user
-    ctx["current_user_display"] = _user_display_name(current_user)
+    ctx["current_user_display"] = submitted_by
     return templates.TemplateResponse("_row.html", ctx)
 
 
@@ -880,12 +905,12 @@ async def submit_send(
         },
     )
 
-    ctx = _build_row_context(slug, run_id)
+    ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
     if not ctx:
         return HTMLResponse("profile not found", status_code=404)
     ctx["request"] = request
     ctx["current_user"] = current_user
-    ctx["current_user_display"] = _user_display_name(current_user)
+    ctx["current_user_display"] = submitted_by
     return templates.TemplateResponse("_row.html", ctx)
 
 
