@@ -14,21 +14,36 @@
 </section>
 
 <section class="dashboard-grid">
-  {% for title, funnel in [("本周漏斗", dash_funnel_week), ("累计漏斗", dash_funnel_total)] %}
-    {% set total = funnel.counts.values()|sum %}
+  {% for title, f in [("本周漏斗", dash_funnel_week), ("累计漏斗", dash_funnel_total)] %}
     <section class="dash-panel">
       <h2>{{ title }}</h2>
-      {% for label, count in funnel.counts.items() %}
-        {% set width = (count / total * 100) if total else 0 %}
+      <div class="funnel-total-row">
+        <span class="funnel-total-num">{{ f.total }}</span> 家客户
+        {% if title == "累计漏斗" %}
+          <span class="funnel-new-badge">+{{ f.new_this_week }} 本周新增</span>
+        {% endif %}
+      </div>
+
+      {% set funnel_steps = [
+        ("已发", f.sent, f.total, "bar-sent"),
+        ("已反馈", f.replied, f.sent, "bar-replied"),
+        ("有效回复", f.valid_reply, f.replied, "bar-valid"),
+        ("已询价", f.inquired, f.valid_reply, "bar-inquired"),
+        ("已成交", f.closed, f.inquired, "bar-closed"),
+      ] %}
+      {% for label, count, prev, klass in funnel_steps %}
+        {% set pct = (count / f.total * 100) if f.total else 0 %}
+        {% set conv = (count / prev * 100) if prev else 0 %}
         <div class="funnel-row">
           <div class="funnel-label">{{ label }}</div>
-          <div class="funnel-bar">
-            <span style="width: {{ width }}%"></span>
+          <div class="funnel-bar-wrap">
+            <div class="funnel-bar {{ klass }}" style="width: {{ pct|round(1) }}%"></div>
           </div>
           <div class="funnel-count">{{ count }}</div>
+          <div class="funnel-pct">{{ pct|round(1) }}%</div>
+          <div class="funnel-conv">↓ {{ conv|round(1) }}%</div>
         </div>
       {% endfor %}
-      <div class="rate-line">有效回复率 {{ "%.1f"|format(funnel.valid_reply_rate) }}%</div>
     </section>
   {% endfor %}
 </section>

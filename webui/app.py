@@ -84,6 +84,7 @@ STATUS_OPTIONS = [
     "未发",
     "已发",
     "已收到有效回复",
+    "已询价",
     "不相关",
     "国家错",
     "邮箱无效",
@@ -1035,11 +1036,15 @@ def _send_count(conn: sqlite3.Connection, submitted_by: str | None, start_date: 
     return int(conn.execute(sql, params).fetchone()["n"])
 
 
-def _sent_lead_keys(
+def _lead_key(slug: str, run_id: str) -> tuple[str, str]:
+    return slug, run_id
+
+
+def _sent_lead_set(
     conn: sqlite3.Connection,
     submitted_by: str | None,
     start_date: str | None = None,
-) -> list[sqlite3.Row]:
+) -> set[tuple[str, str]]:
     conditions = ["send_status = 'sent'"]
     params: list[object] = []
     if submitted_by:
@@ -1052,22 +1057,107 @@ def _sent_lead_keys(
         "SELECT DISTINCT profile_slug, run_id FROM send_tracking "
         f"WHERE {' AND '.join(conditions)}"
     )
-    return conn.execute(sql, params).fetchall()
+    return {
+        _lead_key(row["profile_slug"], row["run_id"])
+        for row in conn.execute(sql, params).fetchall()
+    }
 
 
-def _funnel_for_keys(conn: sqlite3.Connection, keys: list[sqlite3.Row]) -> dict:
-    funnel = {"已发": 0, "已收到有效回复": 0, "已成交": 0}
-    for key in keys:
-        row = conn.execute(
-            "SELECT effective_status FROM lead_status WHERE profile_slug = ? AND run_id = ?",
-            (key["profile_slug"], key["run_id"]),
-        ).fetchone()
-        status_value = row["effective_status"] if row else "已发"
-        if status_value in funnel:
-            funnel[status_value] += 1
-    denominator = funnel["已发"] + funnel["已收到有效回复"]
-    reply_rate = (funnel["已收到有效回复"] / denominator * 100) if denominator else 0
-    return {"counts": funnel, "valid_reply_rate": reply_rate}
+def _reply_lead_set(
+    conn: sqlite3.Connection,
+    verdicts: tuple[str, ...],
+    start_date: str | None = None,
+) -> set[tuple[str, str]]:
+    conditions = [
+        "profile_slug IS NOT NULL",
+        "run_id IS NOT NULL",
+        "llm_verdict IN ({})".format(", ".join("?" for _ in verdicts)),
+    ]
+    params: list[object] = list(verdicts)
+    if start_date:
+        conditions.append("date(received_at) >= ?")
+        params.append(start_date)
+    sql = (
+        "SELECT DISTINCT profile_slug, run_id FROM received_replies "
+        f"WHERE {' AND '.join(conditions)}"
+    )
+    return {
+        _lead_key(row["profile_slug"], row["run_id"])
+        for row in conn.execute(sql, params).fetchall()
+    }
+
+
+def _status_lead_set(
+    conn: sqlite3.Connection,
+    statuses: tuple[str, ...],
+) -> set[tuple[str, str]]:
+    sql = (
+        "SELECT profile_slug, run_id FROM lead_status "
+        "WHERE effective_status IN ({})".format(", ".join("?" for _ in statuses))
+    )
+    return {
+        _lead_key(row["profile_slug"], row["run_id"])
+        for row in conn.execute(sql, list(statuses)).fetchall()
+    }
+
+
+def _generated_date(lead: dict) -> dt.date | None:
+    raw = str(lead.get("generated_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        return dt.date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def _build_funnel(
+    conn: sqlite3.Connection,
+    submitted_by_filter: str | None,
+    since_date: str | None = None,
+) -> dict:
+    all_leads = load_all_leads()
+    all_keys = {_lead_key(lead["slug"], lead["run_id"]) for lead in all_leads}
+    week_start = dt.date.today() - dt.timedelta(days=dt.date.today().weekday())
+    new_this_week = sum(
+        1
+        for lead in all_leads
+        if (generated := _generated_date(lead)) and generated >= week_start
+    )
+
+    sent_keys = _sent_lead_set(conn, submitted_by_filter, since_date)
+    base_keys = sent_keys if since_date else all_keys
+    if since_date:
+        sent_count = len(sent_keys)
+    else:
+        sent_count = len(sent_keys & base_keys)
+
+    replied_keys = _reply_lead_set(
+        conn,
+        ("valid", "rejection", "unclear"),
+        since_date,
+    )
+    valid_reply_keys = _reply_lead_set(conn, ("valid",), since_date)
+    valid_reply_keys |= _status_lead_set(conn, ("已收到有效回复",))
+    inquired_keys = _status_lead_set(conn, ("已询价",))
+    closed_keys = _status_lead_set(conn, ("已成交",))
+
+    if submitted_by_filter:
+        owned_keys = _sent_lead_set(conn, submitted_by_filter)
+        replied_keys &= owned_keys
+        valid_reply_keys &= owned_keys
+        inquired_keys &= owned_keys
+        closed_keys &= owned_keys
+
+    return {
+        "total": len(base_keys),
+        "new_this_week": new_this_week,
+        "sent": sent_count,
+        "replied": len(replied_keys & base_keys),
+        "valid_reply": len(valid_reply_keys & base_keys),
+        "inquired": len(inquired_keys & base_keys),
+        "closed": len(closed_keys & base_keys),
+    }
 
 
 def _type_distribution() -> dict[str, int]:
@@ -1260,11 +1350,8 @@ def _dashboard_payload(
         sends_today = _send_count(conn, submitted_by_filter, today_s)
         sends_week = _send_count(conn, submitted_by_filter, week_start_s)
         sends_total = _send_count(conn, submitted_by_filter)
-        funnel_week = _funnel_for_keys(
-            conn,
-            _sent_lead_keys(conn, submitted_by_filter, week_start_s),
-        )
-        funnel_total = _funnel_for_keys(conn, _sent_lead_keys(conn, submitted_by_filter))
+        funnel_week = _build_funnel(conn, submitted_by_filter, week_start_s)
+        funnel_total = _build_funnel(conn, submitted_by_filter)
         people = []
         if showing_all or (include_admin_people and is_admin):
             rows = conn.execute(
@@ -1286,6 +1373,8 @@ def _dashboard_payload(
     return {
         "scope_label": scope_label,
         "showing_all": showing_all,
+        "total_leads": funnel_total["total"],
+        "new_this_week": funnel_total["new_this_week"],
         "sends_today": sends_today,
         "sends_week": sends_week,
         "sends_total": sends_total,
@@ -1349,6 +1438,8 @@ def index(
             "tag_options": TAG_OPTIONS,
             "send_mode": "dry-run" if _is_dry_run() else "live",
             "truncate": _truncate,
+            "dash_total_leads": dash["total_leads"],
+            "dash_new_this_week": dash["new_this_week"],
             "dash_sends_today": dash["sends_today"],
             "dash_sends_week": dash["sends_week"],
             "dash_sends_total": dash["sends_total"],
@@ -1663,6 +1754,8 @@ def dashboard(
             "current_user_is_admin": is_admin,
             "scope_label": dash["scope_label"],
             "showing_all": dash["showing_all"],
+            "dash_total_leads": dash["total_leads"],
+            "dash_new_this_week": dash["new_this_week"],
             "dash_sends_today": dash["sends_today"],
             "dash_sends_week": dash["sends_week"],
             "dash_sends_total": dash["sends_total"],
