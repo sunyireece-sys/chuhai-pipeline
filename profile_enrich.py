@@ -25,7 +25,7 @@ import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from dotenv import load_dotenv
 from openpyxl import load_workbook
@@ -264,7 +264,7 @@ PHONE_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 WHATSAPP_RE = re.compile(
-    r"https?://(?:wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com)/[^\s\"'<>]+",
+    r"(?:https?://(?:wa\.me|api\.whatsapp\.com|web\.whatsapp\.com|chat\.whatsapp\.com)/[^\s\"'<>]+|whatsapp://send\?[^\s\"'<>]+)",
     re.IGNORECASE,
 )
 SOCIAL_RE = re.compile(
@@ -332,6 +332,7 @@ class PageSnapshot:
     title: str
     text: str
     tel_links: list[str] = field(default_factory=list)
+    whatsapp_links: list[str] = field(default_factory=list)
     crawler: str = "httpx"
 
 
@@ -545,6 +546,37 @@ def _extract_tel_links(content: str) -> list[str]:
     return _unique(values)
 
 
+def _normalize_whatsapp_link(value: str) -> str:
+    cleaned = html.unescape(unquote(value or "")).strip().strip(".,;:()[]{}<>\"'")
+    if not cleaned:
+        return ""
+    parsed = urlparse(cleaned)
+    host = parsed.netloc.lower()
+    if parsed.scheme == "whatsapp":
+        phone = (parse_qs(parsed.query).get("phone") or [""])[0]
+    elif host in {"api.whatsapp.com", "web.whatsapp.com"}:
+        phone = (parse_qs(parsed.query).get("phone") or [""])[0]
+    elif host == "wa.me":
+        phone = parsed.path.strip("/").split("/", 1)[0]
+    else:
+        phone = ""
+    digits = re.sub(r"\D+", "", phone)
+    if 7 <= len(digits) <= 15:
+        return f"https://wa.me/{digits}"
+    if host == "chat.whatsapp.com":
+        return parsed._replace(fragment="").geturl()
+    return ""
+
+
+def _extract_whatsapp_links(content: str) -> list[str]:
+    values: list[str] = []
+    for match in WHATSAPP_RE.finditer(content or ""):
+        normalized = _normalize_whatsapp_link(match.group(0))
+        if normalized:
+            values.append(normalized)
+    return _unique(values)
+
+
 def _is_htmlish_url(url: str) -> bool:
     path = urlparse(url).path.lower()
     if not path:
@@ -645,6 +677,7 @@ def _page_from_html(
         title=_page_title(html_content),
         text=text,
         tel_links=_extract_tel_links(html_content),
+        whatsapp_links=_extract_whatsapp_links(html_content),
         crawler=crawler,
     )
 
@@ -687,6 +720,7 @@ def _page_from_crawl4ai_result(result: object, requested_url: str) -> PageSnapsh
         title=_crawl4ai_result_title(result, html_content),
         text=text,
         tel_links=_extract_tel_links(html_content),
+        whatsapp_links=_extract_whatsapp_links(html_content),
         crawler="crawl4ai",
     )
 
@@ -818,6 +852,7 @@ def fetch_site_pages_httpx(website: str, *, timeout_s: float = 15.0) -> list[Pag
                     title=_page_title(home_response.text),
                     text=home_text,
                     tel_links=_extract_tel_links(home_response.text),
+                    whatsapp_links=_extract_whatsapp_links(home_response.text),
                     crawler="httpx",
                 ),
                 total_chars,
@@ -853,6 +888,7 @@ def fetch_site_pages_httpx(website: str, *, timeout_s: float = 15.0) -> list[Pag
                     title=_page_title(response.text),
                     text=text,
                     tel_links=_extract_tel_links(response.text),
+                    whatsapp_links=_extract_whatsapp_links(response.text),
                     crawler="httpx",
                 ),
                 total_chars,
@@ -974,7 +1010,12 @@ def extract_contacts(pages: list[PageSnapshot], lead: VerifiedLead) -> ContactSi
     text = "\n".join(page.text for page in pages)
     emails = _unique(EMAIL_RE.findall(text) + [part.strip() for part in lead.email.split(";")])
     phones, phone_candidates_low_confidence = _split_phone_confidence(pages)
-    whatsapp_links = _unique(WHATSAPP_RE.findall(text))
+    whatsapp_links = _unique(
+        [
+            *(_normalize_whatsapp_link(value) for value in WHATSAPP_RE.findall(text)),
+            *(link for page in pages for link in page.whatsapp_links),
+        ]
+    )
     social_links = _unique(SOCIAL_RE.findall(text))
     contact_pages = _unique(
         [
@@ -1520,6 +1561,7 @@ def normalize_profile_draft(lead: VerifiedLead, profile: dict, contacts: Contact
     profile["eval_flags"] = []
     profile["quality_flags"] = []
     _merge_contact_signals(profile, contacts)
+    company["whatsapp_contact"] = contacts.whatsapp_links[0] if contacts.whatsapp_links else ""
     profile["contact_quality"] = {
         "high_confidence_phone_count": len(contacts.phones),
         "low_confidence_phone_candidate_count": len(contacts.phone_candidates_low_confidence),
@@ -2099,6 +2141,11 @@ def _read_cached_pages(path: Path) -> list[PageSnapshot] | None:
                 tel_links=[
                     _cell_text(value)
                     for value in (item.get("tel_links") or [])
+                    if _cell_text(value)
+                ],
+                whatsapp_links=[
+                    _cell_text(value)
+                    for value in (item.get("whatsapp_links") or [])
                     if _cell_text(value)
                 ],
                 crawler=_cell_text(item.get("crawler")) or "cache",

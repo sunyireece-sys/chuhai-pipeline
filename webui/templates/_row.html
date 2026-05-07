@@ -47,6 +47,10 @@
             <input type="hidden" name="slug" value="{{ r.lead.slug }}">
             <input type="hidden" name="run_id" value="{{ run_id }}">
 
+            <label>收件邮箱
+              <input type="email" name="form_actual_to" value="{{ r.lead.email }}" placeholder="收件人邮箱">
+            </label>
+
             <label>主题
               <input type="text" name="subject" value="{{ r.lead.subject }}" required>
             </label>

@@ -461,6 +461,7 @@ async def submit_send(
     slug = str(form.get("slug") or "").strip()
     run_id = str(form.get("run_id") or DEFAULT_RUN_ID).strip() or DEFAULT_RUN_ID
     submitted_by = str(form.get("submitted_by") or "").strip()
+    form_actual_to = str(form.get("form_actual_to") or "").strip()
     subject = str(form.get("subject") or "").strip()
     body = str(form.get("body") or "")
     whatsapp = str(form.get("whatsapp") or "")
@@ -473,8 +474,9 @@ async def submit_send(
     if not original:
         return HTMLResponse("profile not found", status_code=404)
     original_to = original["original_to"]
-    if not original_to:
-        return HTMLResponse("original recipient email not found", status_code=422)
+    send_to = form_actual_to if form_actual_to else original_to
+    if not send_to:
+        return HTMLResponse("recipient email not found", status_code=422)
     if not original["subject"] or not original["body"]:
         return HTMLResponse("original outreach content not found", status_code=422)
 
@@ -488,7 +490,7 @@ async def submit_send(
     actual_to, final_subject, final_body = _build_message(
         live=not dry_run,
         test_recipient=test_recipient,
-        original_to=original_to,
+        original_to=send_to,
         subject=subject,
         body=body,
     )
@@ -506,7 +508,7 @@ async def submit_send(
         smtp_response = _redact_secret(
             _send_message(
                 config=config,
-                original_to=original_to,
+                original_to=send_to,
                 actual_to=actual_to,
                 subject=final_subject,
                 body=final_body,
