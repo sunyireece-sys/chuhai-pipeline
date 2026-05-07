@@ -8,13 +8,25 @@ __pycache__/
 secrets/
 工作日志/
 replay.py
+# RUNS-BEGIN
 runs/*
 !runs/2026-04-30/
 runs/2026-04-30/*
 !runs/2026-04-30/05_profiles/
 runs/2026-04-30/05_profiles/*
 !runs/2026-04-30/05_profiles/profiles/
+!runs/2026-04-30/05_profiles/profiles/**
 !runs/2026-04-30/05_profiles/contacts/
+!runs/2026-04-30/05_profiles/contacts/**
+!runs/MEETING_DEMO_FULL_RUN_2026-04-24/
+runs/MEETING_DEMO_FULL_RUN_2026-04-24/*
+!runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/
+runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/*
+!runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/profiles/
+!runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/profiles/**
+!runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/contacts/
+!runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/contacts/**
+# RUNS-END
 webui/feedback.db
 webui/__pycache__/
 .claude/
