@@ -14,6 +14,13 @@
     {% if current_user_display %} · 欢迎，<strong>{{ current_user_display }}</strong>{% endif %}
     {% if current_user_is_admin %} · <a href="/admin">Admin</a>{% endif %}
   </div>
+  <div class="meta">
+    {% if show_excluded %}
+      正在显示已排除 lead · <a href="/?run={{ run_id }}">隐藏已排除</a>
+    {% else %}
+      已排除 {{ excluded_count }} 条 · <a href="/?run={{ run_id }}&show_excluded=1">点击显示</a>
+    {% endif %}
+  </div>
 </header>
 
 <main>

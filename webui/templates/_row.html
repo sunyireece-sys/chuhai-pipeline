@@ -1,4 +1,4 @@
-<tr id="row-{{ r.lead.slug }}" class="lead-row {% if r.latest %}has-feedback{% endif %}">
+<tr id="row-{{ r.lead.slug }}" class="lead-row {% if r.latest %}has-feedback{% endif %} {% if r.status == 'excluded' %}excluded{% endif %}">
   <td class="num">{{ r.lead.slug.split('-')[0] }}</td>
   <td>
     <div class="cname">{{ r.lead.display_name }}</div>
@@ -29,7 +29,34 @@
     {% endif %}
   </td>
   <td>
-    <details>
+    <div class="row-actions">
+      {% if r.status == "excluded" %}
+        <span class="status status-excluded">已排除</span>
+        <form
+          class="inline-action"
+          hx-post="/restore"
+          hx-target="#row-{{ r.lead.slug }}"
+          hx-swap="outerHTML"
+        >
+          <input type="hidden" name="slug" value="{{ r.lead.slug }}">
+          <input type="hidden" name="run_id" value="{{ run_id }}">
+          <button type="submit" class="btn-exclude">恢复</button>
+        </form>
+      {% else %}
+        <form
+          class="inline-action"
+          hx-post="/exclude"
+          hx-target="#row-{{ r.lead.slug }}"
+          hx-swap="outerHTML"
+        >
+          <input type="hidden" name="slug" value="{{ r.lead.slug }}">
+          <input type="hidden" name="run_id" value="{{ run_id }}">
+          <button type="submit" class="btn-exclude">排除</button>
+        </form>
+      {% endif %}
+    </div>
+    {% if r.status != "excluded" %}
+      <details>
       <summary>展开</summary>
       <div class="detail-box">
         <section class="profile-block">
@@ -142,6 +169,7 @@
           {% endif %}
         </section>
       </div>
-    </details>
+      </details>
+    {% endif %}
   </td>
 </tr>

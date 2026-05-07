@@ -58,6 +58,7 @@ TAG_OPTIONS = [
     "报价偏高",
     "其他",
 ]
+EXCLUDED_STATUS = "excluded"
 INITIAL_USERS = [
     ("nicky", "Nicky", 0),
     ("clement", "Clement", 0),
@@ -555,10 +556,12 @@ def load_latest_feedback(slug: str, run_id: str) -> dict | None:
     with _db() as conn:
         row = conn.execute(
             "SELECT * FROM feedback WHERE profile_slug=? AND run_id=? "
-            "ORDER BY submitted_at DESC LIMIT 1",
+            "ORDER BY submitted_at DESC, id DESC LIMIT 1",
             (slug, run_id),
         ).fetchone()
     if not row:
+        return None
+    if not row["status"]:
         return None
     return {
         "status": row["status"],
@@ -572,8 +575,8 @@ def load_latest_feedback(slug: str, run_id: str) -> dict | None:
 def load_history(slug: str, run_id: str) -> list[dict]:
     with _db() as conn:
         rows = conn.execute(
-            "SELECT * FROM feedback WHERE profile_slug=? AND run_id=? "
-            "ORDER BY submitted_at DESC",
+            "SELECT * FROM feedback WHERE profile_slug=? AND run_id=? AND status != '' "
+            "ORDER BY submitted_at DESC, id DESC",
             (slug, run_id),
         ).fetchall()
     return [
@@ -586,6 +589,16 @@ def load_history(slug: str, run_id: str) -> list[dict]:
         }
         for r in rows
     ]
+
+
+def load_latest_status(slug: str, run_id: str) -> str:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT status FROM feedback WHERE profile_slug=? AND run_id=? "
+            "ORDER BY submitted_at DESC, id DESC LIMIT 1",
+            (slug, run_id),
+        ).fetchone()
+    return str(row["status"] or "") if row else ""
 
 
 def load_latest_send(slug: str, run_id: str) -> dict | None:
@@ -654,6 +667,31 @@ def _append_send_log(run_id: str, record: dict) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _record_feedback_status(
+    slug: str,
+    run_id: str,
+    status_value: str,
+    submitted_by: str,
+    tags: list[str] | None = None,
+    note: str = "",
+) -> None:
+    submitted_at = dt.datetime.now().isoformat(timespec="seconds")
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO feedback (profile_slug, run_id, status, tags, note, "
+            "submitted_by, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                slug,
+                run_id,
+                status_value,
+                json.dumps(tags or [], ensure_ascii=False),
+                note,
+                submitted_by,
+                submitted_at,
+            ),
+        )
+
+
 def _build_row_context(
     slug: str,
     run_id: str,
@@ -670,12 +708,14 @@ def _build_row_context(
     latest = load_latest_feedback(slug, run_id)
     history = load_history(slug, run_id)
     latest_send = load_latest_send(slug, run_id)
+    latest_status = load_latest_status(slug, run_id)
     return {
         "r": {
             "lead": lead,
             "latest": latest,
             "history": history,
             "latest_send": latest_send,
+            "status": latest_status,
         },
         "run_id": run_id,
         "status_options": STATUS_OPTIONS,
@@ -689,21 +729,30 @@ def _build_row_context(
 def index(
     request: Request,
     run: str = DEFAULT_RUN_ID,
+    show_excluded: int = 0,
     current_user: str = Depends(require_auth),
 ) -> HTMLResponse:
     current_user_display = _user_display_name(current_user)
     leads = load_sales_leads(run, sender_name=current_user_display)
     enriched = []
+    excluded_count = 0
+    include_excluded = show_excluded == 1
     for lead in leads:
         latest = load_latest_feedback(lead["slug"], run)
         history = load_history(lead["slug"], run)
         latest_send = load_latest_send(lead["slug"], run)
+        latest_status = load_latest_status(lead["slug"], run)
+        if latest_status == EXCLUDED_STATUS:
+            excluded_count += 1
+            if not include_excluded:
+                continue
         enriched.append(
             {
                 "lead": lead,
                 "latest": latest,
                 "history": history,
                 "latest_send": latest_send,
+                "status": latest_status,
             }
         )
     return templates.TemplateResponse(
@@ -715,6 +764,8 @@ def index(
             "current_user": current_user,
             "current_user_display": current_user_display,
             "current_user_is_admin": _user_is_admin(current_user),
+            "show_excluded": include_excluded,
+            "excluded_count": excluded_count,
             "status_options": STATUS_OPTIONS,
             "tag_options": TAG_OPTIONS,
             "send_mode": "dry-run" if _is_dry_run() else "live",
@@ -739,15 +790,52 @@ async def submit_feedback(
         return HTMLResponse("missing required field", status_code=400)
 
     submitted_by = _user_display_name(current_user)
-    submitted_at = dt.datetime.now().isoformat(timespec="seconds")
-    with _db() as conn:
-        conn.execute(
-            "INSERT INTO feedback (profile_slug, run_id, status, tags, note, "
-            "submitted_by, submitted_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (slug, run_id, status, json.dumps(tags, ensure_ascii=False),
-             note, submitted_by, submitted_at),
-        )
+    _record_feedback_status(slug, run_id, status, submitted_by, tags=tags, note=note)
 
+    ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
+    if not ctx:
+        return HTMLResponse("profile not found", status_code=404)
+    ctx["request"] = request
+    ctx["current_user"] = current_user
+    ctx["current_user_display"] = submitted_by
+    return templates.TemplateResponse("_row.html", ctx)
+
+
+@app.post("/exclude", response_class=HTMLResponse)
+async def exclude_lead(
+    request: Request,
+    current_user: str = Depends(require_auth),
+) -> HTMLResponse:
+    form = await request.form()
+    slug = str(form.get("slug") or "").strip()
+    run_id = str(form.get("run_id") or DEFAULT_RUN_ID).strip() or DEFAULT_RUN_ID
+    if not slug:
+        return HTMLResponse("missing required field", status_code=400)
+
+    submitted_by = _user_display_name(current_user)
+    _record_feedback_status(slug, run_id, EXCLUDED_STATUS, submitted_by)
+    ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
+    if not ctx:
+        return HTMLResponse("profile not found", status_code=404)
+    ctx["request"] = request
+    ctx["current_user"] = current_user
+    ctx["current_user_display"] = submitted_by
+    return templates.TemplateResponse("_row.html", ctx)
+
+
+@app.post("/restore", response_class=HTMLResponse)
+async def restore_lead(
+    request: Request,
+    current_user: str = Depends(require_auth),
+) -> HTMLResponse:
+    form = await request.form()
+    slug = str(form.get("slug") or "").strip()
+    run_id = str(form.get("run_id") or DEFAULT_RUN_ID).strip() or DEFAULT_RUN_ID
+    if not slug:
+        return HTMLResponse("missing required field", status_code=400)
+
+    submitted_by = _user_display_name(current_user)
+    _record_feedback_status(slug, run_id, "", submitted_by)
     ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
     if not ctx:
         return HTMLResponse("profile not found", status_code=404)

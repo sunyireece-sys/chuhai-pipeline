@@ -37,6 +37,11 @@ table.leads th {
   z-index: 2;
 }
 table.leads tr.has-feedback { background: #fafff5; }
+table.leads tr.excluded {
+  opacity: 0.45;
+  border-left: 3px solid #ccc;
+}
+table.leads tr.excluded td:first-child { border-left: 3px solid #ccc; }
 .num { color: #888; font-variant-numeric: tabular-nums; }
 .cname { font-weight: 600; }
 .weblink { font-size: 11px; color: #2980b9; text-decoration: none; word-break: break-all; }
@@ -58,7 +63,26 @@ table.leads tr.has-feedback { background: #fafff5; }
 .status-已成交 { background: #27ae60; color: #fff; }
 .status-不相关, .status-邮箱无效, .status-国家错, .status-联系人不对 { background: #e67e22; color: #fff; }
 .status-未发 { background: #bdc3c7; color: #fff; }
+.status-excluded { background: #7f8c8d; color: #fff; }
 .who { font-size: 11px; color: #888; margin-top: 2px; }
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.inline-action { margin: 0; }
+.btn-exclude {
+  padding: 4px 10px;
+  background: #f5f5f5;
+  color: #888;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.btn-exclude:hover { background: #eee; color: #555; }
 
 details summary {
   cursor: pointer;
