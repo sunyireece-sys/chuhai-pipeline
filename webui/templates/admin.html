@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Admin - Sales Feedback</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Admin</h1>
+  <div class="meta">
+    欢迎，<strong>{{ current_user_display }}</strong> · <a href="/">返回首页</a>
+  </div>
+</header>
+
+<main>
+  <table class="leads">
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Display Name</th>
+        <th>Role</th>
+        <th>Change Password</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{{ u.display_name }}</td>
+          <td>{% if u.is_admin %}Admin{% else %}User{% endif %}</td>
+          <td>
+            <form method="post" action="/admin/change-password">
+              <input type="hidden" name="username" value="{{ u.username }}">
+              <input type="password" name="new_password" autocomplete="new-password" required>
+              <button type="submit">改密码</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</main>
+</body>
+</html>

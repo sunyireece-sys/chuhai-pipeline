@@ -67,15 +67,6 @@
               <textarea name="follow_up" rows="6">{{ r.lead.follow_up }}</textarea>
             </label>
 
-            <label>提交人
-              <select name="submitted_by" required>
-                <option value="">— 选 —</option>
-                {% for s in submitter_options %}
-                  <option value="{{ s }}">{{ s }}</option>
-                {% endfor %}
-              </select>
-            </label>
-
             <button type="submit" class="btn-send {% if send_mode == 'dry-run' %}btn-dryrun{% endif %}">
               {% if send_mode == 'dry-run' %}🧪 Dry-run 发送{% else %}📤 发送邮件{% endif %}
             </button>
@@ -129,15 +120,6 @@
 
             <label>备注
               <textarea name="note" rows="3" maxlength="500" placeholder="可选，<=500 字"></textarea>
-            </label>
-
-            <label>提交人
-              <select name="submitted_by" required>
-                <option value="">— 选 —</option>
-                {% for s in submitter_options %}
-                  <option value="{{ s }}">{{ s }}</option>
-                {% endfor %}
-              </select>
             </label>
 
             <button type="submit">提交</button>

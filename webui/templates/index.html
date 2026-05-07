@@ -11,7 +11,8 @@
   <h1>Sales Feedback</h1>
   <div class="meta">
     Run: <strong>{{ run_id }}</strong> · 共 {{ rows|length }} 家公司
-    {% if current_user %} · User: <strong>{{ current_user }}</strong>{% endif %}
+    {% if current_user_display %} · 欢迎，<strong>{{ current_user_display }}</strong>{% endif %}
+    {% if current_user_is_admin %} · <a href="/admin">Admin</a>{% endif %}
   </div>
 </header>
 

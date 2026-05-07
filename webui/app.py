@@ -8,6 +8,8 @@ are appended to a SQLite database (feedback.db).
 from __future__ import annotations
 
 import datetime as dt
+import base64
+import hashlib
 import json
 import os
 import re
@@ -17,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -56,7 +58,12 @@ TAG_OPTIONS = [
     "报价偏高",
     "其他",
 ]
-SUBMITTER_OPTIONS = ["Nicky", "Andrew", "Reece", "Other"]
+INITIAL_USERS = [
+    ("nicky", "Nicky", 0),
+    ("clement", "Clement", 0),
+    ("jeff", "Jeff", 0),
+    ("admin", "Admin", 1),
+]
 
 
 app = FastAPI(
@@ -79,32 +86,49 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _webui_password() -> str:
-    return (os.environ.get("WEBUI_PASSWORD") or "").strip()
-
-
-def require_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)) -> str:
-    password = _webui_password()
-    if not password:
-        return ""
-    authenticated = (
-        credentials is not None
-        and secrets.compare_digest(credentials.username, "sales")
-        and secrets.compare_digest(credentials.password, password)
-    )
-    if authenticated:
-        return credentials.username
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication required",
-        headers={"WWW-Authenticate": "Basic"},
-    )
-
-
 def _db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _initial_user_password() -> str:
+    return (os.environ.get("WEBUI_INITIAL_PASSWORD") or os.environ.get("WEBUI_PASSWORD") or "").strip()
+
+
+def _hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+    return base64.b64encode(salt + dk).decode()
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    try:
+        raw = base64.b64decode(stored)
+    except Exception:
+        return False
+    if len(raw) < 17:
+        return False
+    salt, dk = raw[:16], raw[16:]
+    check = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 260_000)
+    return secrets.compare_digest(dk, check)
+
+
+def _seed_initial_users(conn: sqlite3.Connection) -> None:
+    initial_password = _initial_user_password()
+    if not initial_password:
+        return
+    created_at = dt.datetime.now().isoformat(timespec="seconds")
+    for username, display_name, is_admin in INITIAL_USERS:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO users (
+                username, display_name, password_hash, is_admin, created_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (username, display_name, _hash_password(initial_password), is_admin, created_at),
+        )
 
 
 def _init_db() -> None:
@@ -160,9 +184,75 @@ def _init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_send_slug_run "
             "ON send_tracking(profile_slug, run_id, submitted_at DESC)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                display_name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                is_admin INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        _seed_initial_users(conn)
 
 
 _init_db()
+
+
+def _auth_error(detail: str = "Authentication required") -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Basic"},
+    )
+
+
+def require_auth(credentials: Optional[HTTPBasicCredentials] = Depends(security)) -> str:
+    if credentials is None:
+        raise _auth_error()
+    username = credentials.username.strip().lower()
+    if not username:
+        raise _auth_error("Invalid credentials")
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    if row is None or not _verify_password(credentials.password, row["password_hash"]):
+        raise _auth_error("Invalid credentials")
+    return username
+
+
+def require_admin(current_user: str = Depends(require_auth)) -> str:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT is_admin FROM users WHERE username = ?",
+            (current_user,),
+        ).fetchone()
+    if row is None or not row["is_admin"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+    return current_user
+
+
+def _user_display_name(username: str) -> str:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT display_name FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    return row["display_name"] if row else username
+
+
+def _user_is_admin(username: str) -> bool:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT is_admin FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    return bool(row and row["is_admin"])
 
 
 def _read_json(path: Path) -> dict:
@@ -377,7 +467,6 @@ def _build_row_context(slug: str, run_id: str, leads: list[dict] | None = None) 
         "run_id": run_id,
         "status_options": STATUS_OPTIONS,
         "tag_options": TAG_OPTIONS,
-        "submitter_options": SUBMITTER_OPTIONS,
         "send_mode": "dry-run" if _is_dry_run() else "live",
         "truncate": _truncate,
     }
@@ -410,9 +499,10 @@ def index(
             "rows": enriched,
             "run_id": run,
             "current_user": current_user,
+            "current_user_display": _user_display_name(current_user),
+            "current_user_is_admin": _user_is_admin(current_user),
             "status_options": STATUS_OPTIONS,
             "tag_options": TAG_OPTIONS,
-            "submitter_options": SUBMITTER_OPTIONS,
             "send_mode": "dry-run" if _is_dry_run() else "live",
             "truncate": _truncate,
         },
@@ -430,11 +520,11 @@ async def submit_feedback(
     status = form.get("status", "").strip()
     tags = form.getlist("tags")
     note = form.get("note", "").strip()
-    submitted_by = form.get("submitted_by", "").strip()
 
-    if not slug or not status or not submitted_by:
+    if not slug or not status:
         return HTMLResponse("missing required field", status_code=400)
 
+    submitted_by = _user_display_name(current_user)
     submitted_at = dt.datetime.now().isoformat(timespec="seconds")
     with _db() as conn:
         conn.execute(
@@ -449,6 +539,7 @@ async def submit_feedback(
         return HTMLResponse("profile not found", status_code=404)
     ctx["request"] = request
     ctx["current_user"] = current_user
+    ctx["current_user_display"] = _user_display_name(current_user)
     return templates.TemplateResponse("_row.html", ctx)
 
 
@@ -460,16 +551,16 @@ async def submit_send(
     form = await request.form()
     slug = str(form.get("slug") or "").strip()
     run_id = str(form.get("run_id") or DEFAULT_RUN_ID).strip() or DEFAULT_RUN_ID
-    submitted_by = str(form.get("submitted_by") or "").strip()
     form_actual_to = str(form.get("form_actual_to") or "").strip()
     subject = str(form.get("subject") or "").strip()
     body = str(form.get("body") or "")
     whatsapp = str(form.get("whatsapp") or "")
     follow_up = str(form.get("follow_up") or "")
 
-    if not slug or not submitted_by or not subject or not body.strip():
+    if not slug or not subject or not body.strip():
         return HTMLResponse("missing required field", status_code=400)
 
+    submitted_by = _user_display_name(current_user)
     original = load_original_send_source(slug, run_id)
     if not original:
         return HTMLResponse("profile not found", status_code=404)
@@ -586,4 +677,48 @@ async def submit_send(
         return HTMLResponse("profile not found", status_code=404)
     ctx["request"] = request
     ctx["current_user"] = current_user
+    ctx["current_user_display"] = _user_display_name(current_user)
     return templates.TemplateResponse("_row.html", ctx)
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page(
+    request: Request,
+    current_user: str = Depends(require_admin),
+) -> HTMLResponse:
+    with _db() as conn:
+        users = conn.execute(
+            "SELECT username, display_name, is_admin FROM users ORDER BY id"
+        ).fetchall()
+    return templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "users": users,
+            "current_user": current_user,
+            "current_user_display": _user_display_name(current_user),
+        },
+    )
+
+
+@app.post("/admin/change-password")
+async def change_password(
+    request: Request,
+    _: str = Depends(require_admin),
+) -> RedirectResponse:
+    form = await request.form()
+    username = str(form.get("username") or "").strip().lower()
+    new_password = str(form.get("new_password") or "").strip()
+    if not username or not new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="username and new_password required",
+        )
+    with _db() as conn:
+        cursor = conn.execute(
+            "UPDATE users SET password_hash = ? WHERE username = ?",
+            (_hash_password(new_password), username),
+        )
+    if cursor.rowcount < 1:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
