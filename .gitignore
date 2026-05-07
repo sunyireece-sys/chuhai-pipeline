@@ -7,6 +7,7 @@ __pycache__/
 runs/
 secrets/
 replay.py
+auto_resume.log
 工作日志/
 .DS_Store
 webui/feedback.db

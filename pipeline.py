@@ -24,6 +24,7 @@ import logging
 import os
 import random
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -1047,12 +1048,30 @@ def run_step3(
 
 def run_step4(xiaoman_xlsx: Path, run_dir: Path) -> Path:
     verified_xlsx = run_dir / "04_verified.xlsx"
+    if verified_xlsx.exists():
+        if xiaoman_xlsx.exists() and xiaoman_xlsx.stat().st_mtime > verified_xlsx.stat().st_mtime:
+            logging.info("step4: 03_xiaoman.xlsx 比 04_verified.xlsx 新，删除旧输出重跑")
+            verified_xlsx.unlink()
+            profiles_dir = run_dir / "05_profiles"
+            if profiles_dir.exists():
+                shutil.rmtree(profiles_dir)
+                logging.info("step4: 同时删除 05_profiles/ 以强制 step5 重跑")
+        else:
+            logging.info("step4: %s 已存在且为最新，跳过", verified_xlsx.name)
+            return verified_xlsx
     return run_website_verify(xiaoman_xlsx, verified_xlsx)
 
 
 def run_step5(verified_xlsx: Path, run_dir: Path, limit: int | None = None) -> Path:
+    profiles_root = run_dir / "05_profiles"
     profiles_dir = run_dir / "05_profiles" / "profiles"
     existing_profiles = list(profiles_dir.glob("*.json")) if profiles_dir.is_dir() else []
+    if existing_profiles:
+        newest_profile = max(existing_profiles, key=lambda p: p.stat().st_mtime)
+        if verified_xlsx.stat().st_mtime > newest_profile.stat().st_mtime:
+            logging.info("step5: 04_verified.xlsx 比现有 profile 新，删除 05_profiles/ 重跑")
+            shutil.rmtree(profiles_root)
+            existing_profiles = []
     if existing_profiles:
         logging.info(
             "step5: found %d existing profile JSON files; profile_enrich.py will skip existing leads",
