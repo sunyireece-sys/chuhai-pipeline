@@ -2,6 +2,9 @@
 Haichu pipeline: keyword markdown → buyers.xlsx → Xiaoman → website verification.
 
 Usage:
+    python pipeline.py runs/xxx/01_keywords.md              # 全流程：step2→3→4→5→deploy
+    python pipeline.py runs/xxx/01_keywords.md --skip-step5 # 跳过 step5
+    python pipeline.py runs/xxx/01_keywords.md --no-deploy  # 不自动部署
     python pipeline.py runs/2026-04-08_goji/01_keywords.md
     python pipeline.py runs/2026-04-08_goji/01_keywords.md --skip-step3
     python pipeline.py runs/2026-04-08_goji/01_keywords.md --skip-contacts
@@ -21,6 +24,7 @@ import logging
 import os
 import random
 import re
+import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
@@ -88,6 +92,22 @@ def parse_args() -> argparse.Namespace:
         "--skip-step4",
         action="store_true",
         help="Skip website verification + LLM judging. Useful when OPENAI_API_KEY is not set.",
+    )
+    parser.add_argument(
+        "--skip-step5",
+        action="store_true",
+        help="Skip profile enrichment (step5).",
+    )
+    parser.add_argument(
+        "--no-deploy",
+        action="store_true",
+        help="Skip auto-deploy after step5.",
+    )
+    parser.add_argument(
+        "--step5-limit",
+        type=int,
+        default=None,
+        help="Pass --limit N to profile_enrich.py.",
     )
     parser.add_argument(
         "--results-per-query",
@@ -1030,6 +1050,39 @@ def run_step4(xiaoman_xlsx: Path, run_dir: Path) -> Path:
     return run_website_verify(xiaoman_xlsx, verified_xlsx)
 
 
+def run_step5(verified_xlsx: Path, run_dir: Path, limit: int | None = None) -> Path:
+    profiles_dir = run_dir / "05_profiles" / "profiles"
+    existing_profiles = list(profiles_dir.glob("*.json")) if profiles_dir.is_dir() else []
+    if existing_profiles:
+        logging.info(
+            "step5: found %d existing profile JSON files; profile_enrich.py will skip existing leads",
+            len(existing_profiles),
+        )
+
+    script = Path(__file__).parent / "profile_enrich.py"
+    cmd = [sys.executable, str(script), str(verified_xlsx)]
+    if limit is not None:
+        cmd.extend(["--limit", str(limit)])
+
+    logging.info("step5: running %s", " ".join(cmd))
+    result = subprocess.run(cmd, cwd=Path(__file__).parent)
+    if result.returncode != 0:
+        logging.error("step5 failed with exit code %d", result.returncode)
+        raise RuntimeError(f"step5 failed with exit code {result.returncode}")
+    return run_dir / "05_profiles"
+
+
+def run_deploy(project_root: Path) -> None:
+    deploy_sh = project_root / "deploy.sh"
+    if not deploy_sh.is_file():
+        logging.warning("deploy.sh not found, skipping deploy")
+        return
+    try:
+        subprocess.run(["bash", str(deploy_sh)], cwd=project_root, check=True)
+    except subprocess.CalledProcessError as exc:
+        logging.error("deploy failed with exit code %d; local pipeline data is still available", exc.returncode)
+
+
 # ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
@@ -1113,6 +1166,18 @@ def main() -> None:
         logging.info("step4 skipped (no %s found)", xiaoman_xlsx.name)
     else:
         run_step4(xiaoman_xlsx, run_dir)
+
+    verified_xlsx = run_dir / "04_verified.xlsx"
+    if args.skip_step4 or not verified_xlsx.is_file():
+        logging.info("step5 skipped (no 04_verified.xlsx)")
+    elif args.skip_step5:
+        logging.info("step5 skipped (--skip-step5 set)")
+    else:
+        run_step5(verified_xlsx, run_dir, limit=args.step5_limit)
+        if not args.no_deploy:
+            run_deploy(Path(__file__).parent)
+        else:
+            logging.info("deploy skipped (--no-deploy set)")
     logging.info("pipeline complete")
 
 
