@@ -1126,11 +1126,8 @@ def _build_funnel(
     )
 
     sent_keys = _sent_lead_set(conn, submitted_by_filter, since_date)
-    base_keys = sent_keys if since_date else all_keys
-    if since_date:
-        sent_count = len(sent_keys)
-    else:
-        sent_count = len(sent_keys & base_keys)
+    total_count = new_this_week if since_date else len(all_keys)
+    sent_count = len(sent_keys)
 
     replied_keys = _reply_lead_set(
         conn,
@@ -1150,13 +1147,12 @@ def _build_funnel(
         closed_keys &= owned_keys
 
     return {
-        "total": len(base_keys),
-        "new_this_week": new_this_week,
+        "total": total_count,
         "sent": sent_count,
-        "replied": len(replied_keys & base_keys),
-        "valid_reply": len(valid_reply_keys & base_keys),
-        "inquired": len(inquired_keys & base_keys),
-        "closed": len(closed_keys & base_keys),
+        "replied": len(replied_keys),
+        "valid_reply": len(valid_reply_keys),
+        "inquired": len(inquired_keys),
+        "closed": len(closed_keys),
     }
 
 
@@ -1374,7 +1370,6 @@ def _dashboard_payload(
         "scope_label": scope_label,
         "showing_all": showing_all,
         "total_leads": funnel_total["total"],
-        "new_this_week": funnel_total["new_this_week"],
         "sends_today": sends_today,
         "sends_week": sends_week,
         "sends_total": sends_total,
@@ -1439,7 +1434,6 @@ def index(
             "send_mode": "dry-run" if _is_dry_run() else "live",
             "truncate": _truncate,
             "dash_total_leads": dash["total_leads"],
-            "dash_new_this_week": dash["new_this_week"],
             "dash_sends_today": dash["sends_today"],
             "dash_sends_week": dash["sends_week"],
             "dash_sends_total": dash["sends_total"],
@@ -1755,7 +1749,6 @@ def dashboard(
             "scope_label": dash["scope_label"],
             "showing_all": dash["showing_all"],
             "dash_total_leads": dash["total_leads"],
-            "dash_new_this_week": dash["new_this_week"],
             "dash_sends_today": dash["sends_today"],
             "dash_sends_week": dash["sends_week"],
             "dash_sends_total": dash["sends_total"],

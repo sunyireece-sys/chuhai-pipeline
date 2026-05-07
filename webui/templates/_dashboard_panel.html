@@ -14,14 +14,11 @@
 </section>
 
 <section class="dashboard-grid">
-  {% for title, f in [("本周漏斗", dash_funnel_week), ("累计漏斗", dash_funnel_total)] %}
+  {% for title, label, f in [("本周漏斗", "本周新增客户", dash_funnel_week), ("累计漏斗", "累计客户总数", dash_funnel_total)] %}
     <section class="dash-panel">
       <h2>{{ title }}</h2>
       <div class="funnel-total-row">
-        <span class="funnel-total-num">{{ f.total }}</span> 家客户
-        {% if title == "累计漏斗" %}
-          <span class="funnel-new-badge">+{{ f.new_this_week }} 本周新增</span>
-        {% endif %}
+        <span class="funnel-total-num">{{ f.total }}</span> {{ label }}
       </div>
 
       {% set funnel_steps = [
