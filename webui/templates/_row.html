@@ -10,7 +10,23 @@
     {% endif %}
   </td>
   <td>{{ r.lead.country }}</td>
-  <td><span class="rating r-{{ r.lead.rating }}">{{ r.lead.rating }}</span></td>
+  <td class="ctype">
+    <form
+      hx-post="/set-customer-type"
+      hx-target="#row-{{ r.lead.run_id }}-{{ r.lead.slug }}"
+      hx-swap="outerHTML"
+      hx-trigger="change"
+    >
+      <input type="hidden" name="slug" value="{{ r.lead.slug }}">
+      <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
+      <select name="type">
+        <option value="">— 未分类 —</option>
+        {% for t in customer_type_options %}
+          <option value="{{ t }}" {% if r.customer_type and r.customer_type.type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </form>
+  </td>
   <td class="email">
     {% if r.lead.email %}
       <a href="mailto:{{ r.lead.email }}">{{ r.lead.email }}</a>
@@ -24,12 +40,24 @@
   </td>
   <td class="subject">{{ truncate(r.lead.subject, 60) }}</td>
   <td class="latest">
-    {% if r.latest %}
-      <span class="status status-{{ r.latest.status }}">{{ r.latest.status }}</span>
-      <div class="who">{{ r.latest.submitted_by }} · {{ r.latest.submitted_at[:16] }}</div>
-    {% else %}
-      <span class="muted">无</span>
-    {% endif %}
+    <span class="status status-{{ r.lead_status.effective_status }} {% if r.lead_status.is_manual_override %}status-manual-override{% endif %}">
+      {{ r.lead_status.effective_status }}{% if r.lead_status.is_manual_override %} ✏️{% endif %}
+    </span>
+    <form
+      class="status-form"
+      hx-post="/set-status"
+      hx-target="#row-{{ r.lead.run_id }}-{{ r.lead.slug }}"
+      hx-swap="outerHTML"
+      hx-trigger="change"
+    >
+      <input type="hidden" name="slug" value="{{ r.lead.slug }}">
+      <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
+      <select name="status">
+        {% for s in status_options %}
+          <option value="{{ s }}" {% if r.lead_status.effective_status == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </form>
   </td>
   <td>
     <div class="row-actions">
@@ -121,7 +149,21 @@
             </div>
           {% endif %}
 
-          <h4>提交反馈</h4>
+          {% if r.received_replies %}
+            <h4>收到的回复</h4>
+            {% for reply in r.received_replies %}
+              <div class="reply-card verdict-{{ reply.llm_verdict or 'unclear' }}">
+                <div class="reply-meta">
+                  {{ reply.received_at[:16] }} · {{ reply.from_email }} ·
+                  <span class="verdict">{{ reply.llm_verdict or 'unclear' }}</span>
+                </div>
+                <div class="reply-subject">{{ reply.subject }}</div>
+                <pre class="reply-body">{{ reply.body_text[:800] }}</pre>
+              </div>
+            {% endfor %}
+          {% endif %}
+
+          <h4>提交备注</h4>
           <form
             hx-post="/feedback"
             hx-target="#row-{{ r.lead.run_id }}-{{ r.lead.slug }}"
@@ -129,15 +171,7 @@
           >
             <input type="hidden" name="slug" value="{{ r.lead.slug }}">
             <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
-
-            <label>状态
-              <select name="status" required>
-                <option value="">— 选 —</option>
-                {% for s in status_options %}
-                  <option value="{{ s }}">{{ s }}</option>
-                {% endfor %}
-              </select>
-            </label>
+            <input type="hidden" name="status" value="{{ r.lead_status.effective_status }}">
 
             <fieldset class="tags">
               <legend>标签（多选）</legend>

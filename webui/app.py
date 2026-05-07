@@ -82,13 +82,18 @@ _SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 STATUS_OPTIONS = [
     "未发",
-    "已发待回",
-    "已回",
+    "已发",
+    "已收到有效回复",
     "不相关",
     "国家错",
     "邮箱无效",
     "联系人不对",
     "已成交",
+]
+CUSTOMER_TYPE_OPTIONS = [
+    "分销商",
+    "品牌方",
+    "工厂客户",
 ]
 TAG_OPTIONS = [
     "邮件太硬",
@@ -811,6 +816,212 @@ def load_latest_status(slug: str, run_id: str) -> str:
     return str(row["status"] or "") if row else ""
 
 
+def _compute_auto_status(slug: str, run_id: str) -> str:
+    with _db() as conn:
+        reply = conn.execute(
+            """
+            SELECT 1 FROM received_replies
+            WHERE profile_slug = ? AND run_id = ? AND llm_verdict = 'valid'
+            LIMIT 1
+            """,
+            (slug, run_id),
+        ).fetchone()
+        if reply:
+            return "已收到有效回复"
+        sent = conn.execute(
+            """
+            SELECT 1 FROM send_tracking
+            WHERE profile_slug = ? AND run_id = ? AND send_status = 'sent'
+            LIMIT 1
+            """,
+            (slug, run_id),
+        ).fetchone()
+    return "已发" if sent else "未发"
+
+
+def get_lead_status(slug: str, run_id: str) -> dict:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM lead_status WHERE profile_slug = ? AND run_id = ?",
+            (slug, run_id),
+        ).fetchone()
+    if row:
+        return {
+            "auto_status": row["auto_status"],
+            "manual_status": row["manual_status"],
+            "effective_status": row["effective_status"],
+            "updated_at": row["updated_at"],
+            "is_manual_override": bool(row["manual_status"]),
+        }
+    auto_status = _compute_auto_status(slug, run_id)
+    return {
+        "auto_status": auto_status,
+        "manual_status": None,
+        "effective_status": auto_status,
+        "updated_at": "",
+        "is_manual_override": False,
+    }
+
+
+def _set_auto_lead_status(slug: str, run_id: str, new_status: str, reason: str = "") -> None:
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM lead_status WHERE profile_slug = ? AND run_id = ?",
+            (slug, run_id),
+        ).fetchone()
+        if row and row["auto_status"] == "已收到有效回复" and new_status == "已发":
+            return
+        old_effective = row["effective_status"] if row else None
+        manual_status = row["manual_status"] if row else None
+        effective_status = manual_status or new_status
+        if row:
+            conn.execute(
+                """
+                UPDATE lead_status
+                SET auto_status = ?, effective_status = ?, updated_at = ?
+                WHERE profile_slug = ? AND run_id = ?
+                """,
+                (new_status, effective_status, now, slug, run_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO lead_status (
+                    profile_slug, run_id, auto_status, manual_status,
+                    effective_status, updated_at
+                )
+                VALUES (?, ?, ?, NULL, ?, ?)
+                """,
+                (slug, run_id, new_status, effective_status, now),
+            )
+        if old_effective != effective_status:
+            conn.execute(
+                """
+                INSERT INTO status_change_log (
+                    profile_slug, run_id, changed_at, changed_by,
+                    from_status, to_status, source, reason
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (slug, run_id, now, "system", old_effective, effective_status, "auto", reason),
+            )
+
+
+def set_lead_status(
+    slug: str,
+    run_id: str,
+    new_status: str,
+    changed_by: str,
+    source: str = "manual",
+) -> None:
+    if new_status not in STATUS_OPTIONS:
+        raise ValueError("invalid status")
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM lead_status WHERE profile_slug = ? AND run_id = ?",
+            (slug, run_id),
+        ).fetchone()
+        auto_status = row["auto_status"] if row else _compute_auto_status(slug, run_id)
+        old_effective = row["effective_status"] if row else auto_status
+        if row:
+            conn.execute(
+                """
+                UPDATE lead_status
+                SET auto_status = ?, manual_status = ?, effective_status = ?, updated_at = ?
+                WHERE profile_slug = ? AND run_id = ?
+                """,
+                (auto_status, new_status, new_status, now, slug, run_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO lead_status (
+                    profile_slug, run_id, auto_status, manual_status,
+                    effective_status, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (slug, run_id, auto_status, new_status, new_status, now),
+            )
+        if old_effective != new_status:
+            conn.execute(
+                """
+                INSERT INTO status_change_log (
+                    profile_slug, run_id, changed_at, changed_by,
+                    from_status, to_status, source, reason
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (slug, run_id, now, changed_by, old_effective, new_status, source, None),
+            )
+
+
+def get_customer_type(slug: str, run_id: str) -> dict | None:
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM customer_type WHERE profile_slug = ? AND run_id = ?",
+            (slug, run_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_customer_type(slug: str, run_id: str, new_type: str, changed_by: str) -> None:
+    if new_type and new_type not in CUSTOMER_TYPE_OPTIONS:
+        raise ValueError("invalid customer type")
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    value = new_type or None
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT type FROM customer_type WHERE profile_slug = ? AND run_id = ?",
+            (slug, run_id),
+        ).fetchone()
+        old_type = row["type"] if row else None
+        if row:
+            conn.execute(
+                """
+                UPDATE customer_type
+                SET type = ?, source = 'manual', assigned_by = ?, assigned_at = ?
+                WHERE profile_slug = ? AND run_id = ?
+                """,
+                (value, changed_by, now, slug, run_id),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO customer_type (
+                    profile_slug, run_id, type, source, assigned_by, assigned_at
+                )
+                VALUES (?, ?, ?, 'manual', ?, ?)
+                """,
+                (slug, run_id, value, changed_by, now),
+            )
+        if old_type != value:
+            conn.execute(
+                """
+                INSERT INTO customer_type_change_log (
+                    profile_slug, run_id, changed_at, changed_by, from_type, to_type
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (slug, run_id, now, changed_by, old_type, value),
+            )
+
+
+def get_received_replies(slug: str, run_id: str) -> list[dict]:
+    with _db() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM received_replies
+            WHERE profile_slug = ? AND run_id = ?
+            ORDER BY received_at DESC, id DESC
+            """,
+            (slug, run_id),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def load_latest_send(slug: str, run_id: str) -> dict | None:
     with _db() as conn:
         row = conn.execute(
@@ -920,6 +1131,9 @@ def _build_row_context(
     history = load_history(slug, run_id)
     latest_send = load_latest_send(slug, run_id)
     latest_status = load_latest_status(slug, run_id)
+    lead_status = get_lead_status(slug, run_id)
+    customer_type = get_customer_type(slug, run_id)
+    received_replies = get_received_replies(slug, run_id)
     return {
         "r": {
             "lead": lead,
@@ -927,9 +1141,13 @@ def _build_row_context(
             "history": history,
             "latest_send": latest_send,
             "status": latest_status,
+            "lead_status": lead_status,
+            "customer_type": customer_type,
+            "received_replies": received_replies,
         },
         "run_id": run_id,
         "status_options": STATUS_OPTIONS,
+        "customer_type_options": CUSTOMER_TYPE_OPTIONS,
         "tag_options": TAG_OPTIONS,
         "send_mode": "dry-run" if _is_dry_run() else "live",
         "truncate": _truncate,
@@ -953,6 +1171,9 @@ def index(
         history = load_history(lead["slug"], run_id)
         latest_send = load_latest_send(lead["slug"], run_id)
         latest_status = load_latest_status(lead["slug"], run_id)
+        lead_status = get_lead_status(lead["slug"], run_id)
+        customer_type = get_customer_type(lead["slug"], run_id)
+        received_replies = get_received_replies(lead["slug"], run_id)
         if latest_status == EXCLUDED_STATUS:
             excluded_count += 1
             if not include_excluded:
@@ -964,6 +1185,9 @@ def index(
                 "history": history,
                 "latest_send": latest_send,
                 "status": latest_status,
+                "lead_status": lead_status,
+                "customer_type": customer_type,
+                "received_replies": received_replies,
             }
         )
     return templates.TemplateResponse(
@@ -977,6 +1201,7 @@ def index(
             "show_excluded": include_excluded,
             "excluded_count": excluded_count,
             "status_options": STATUS_OPTIONS,
+            "customer_type_options": CUSTOMER_TYPE_OPTIONS,
             "tag_options": TAG_OPTIONS,
             "send_mode": "dry-run" if _is_dry_run() else "live",
             "truncate": _truncate,
@@ -1046,6 +1271,58 @@ async def restore_lead(
 
     submitted_by = _user_display_name(current_user)
     _record_feedback_status(slug, run_id, "", submitted_by)
+    ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
+    if not ctx:
+        return HTMLResponse("profile not found", status_code=404)
+    ctx["request"] = request
+    ctx["current_user"] = current_user
+    ctx["current_user_display"] = submitted_by
+    return templates.TemplateResponse("_row.html", ctx)
+
+
+@app.post("/set-status", response_class=HTMLResponse)
+async def update_lead_status(
+    request: Request,
+    current_user: str = Depends(require_auth),
+) -> HTMLResponse:
+    form = await request.form()
+    slug = str(form.get("slug") or "").strip()
+    run_id = str(form.get("run_id") or _default_run_id()).strip() or _default_run_id()
+    new_status = str(form.get("status") or "").strip()
+    if not slug or not new_status:
+        return HTMLResponse("missing required field", status_code=400)
+
+    submitted_by = _user_display_name(current_user)
+    try:
+        set_lead_status(slug, run_id, new_status, submitted_by)
+    except ValueError as exc:
+        return HTMLResponse(str(exc), status_code=400)
+    ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
+    if not ctx:
+        return HTMLResponse("profile not found", status_code=404)
+    ctx["request"] = request
+    ctx["current_user"] = current_user
+    ctx["current_user_display"] = submitted_by
+    return templates.TemplateResponse("_row.html", ctx)
+
+
+@app.post("/set-customer-type", response_class=HTMLResponse)
+async def update_customer_type(
+    request: Request,
+    current_user: str = Depends(require_auth),
+) -> HTMLResponse:
+    form = await request.form()
+    slug = str(form.get("slug") or "").strip()
+    run_id = str(form.get("run_id") or _default_run_id()).strip() or _default_run_id()
+    new_type = str(form.get("type") or "").strip()
+    if not slug:
+        return HTMLResponse("missing required field", status_code=400)
+
+    submitted_by = _user_display_name(current_user)
+    try:
+        set_customer_type(slug, run_id, new_type, submitted_by)
+    except ValueError as exc:
+        return HTMLResponse(str(exc), status_code=400)
     ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
     if not ctx:
         return HTMLResponse("profile not found", status_code=404)
@@ -1162,6 +1439,9 @@ async def submit_send(
             ),
         )
         send_id = int(cursor.lastrowid)
+
+    if send_status == "sent":
+        _set_auto_lead_status(slug, run_id, "已发", reason="email sent")
 
     edited_fields = {
         "subject": (original["subject"], subject, subject_edited),

@@ -59,13 +59,29 @@ table.leads tr.excluded td:first-child { border-left: 3px solid #ccc; }
 .rating.r-Z { background: #e74c3c; color: #fff; }
 
 .status { display: inline-block; padding: 1px 6px; border-radius: 3px; background: #ecf0f1; font-size: 12px; }
+.status-已发 { background: #f1c40f; color: #fff; }
 .status-已发待回 { background: #f1c40f; color: #fff; }
+.status-已收到有效回复 { background: #3498db; color: #fff; }
 .status-已回 { background: #3498db; color: #fff; }
 .status-已成交 { background: #27ae60; color: #fff; }
 .status-不相关, .status-邮箱无效, .status-国家错, .status-联系人不对 { background: #e67e22; color: #fff; }
 .status-未发 { background: #bdc3c7; color: #fff; }
 .status-excluded { background: #7f8c8d; color: #fff; }
+.status-manual-override { box-shadow: 0 0 0 2px #f9e79f inset; }
 .who { font-size: 11px; color: #888; margin-top: 2px; }
+
+.ctype select,
+.status-form select {
+  width: 100%;
+  min-width: 96px;
+  padding: 3px 5px;
+  font-size: 12px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #fff;
+  color: #222;
+}
+.status-form { margin-top: 4px; }
 
 .row-actions {
   display: flex;
@@ -214,6 +230,31 @@ details[open] summary { background: #34495e; color: #fff; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.reply-card {
+  margin: 0 0 8px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-left: 3px solid #f39c12;
+}
+.reply-card.verdict-valid { border-left-color: #27ae60; }
+.reply-card.verdict-rejection { border-left-color: #e74c3c; }
+.reply-card.verdict-auto-reply { border-left-color: #95a5a6; }
+.reply-card.verdict-unclear { border-left-color: #f39c12; }
+.reply-meta { font-size: 11px; color: #888; margin-bottom: 4px; }
+.reply-subject { font-weight: 600; margin-bottom: 4px; }
+.reply-body {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  max-height: 220px;
+  overflow: auto;
+}
+.verdict { font-weight: 600; }
+.verdict-valid .verdict { color: #27ae60; }
+.verdict-rejection .verdict { color: #e74c3c; }
+.verdict-auto-reply .verdict { color: #7f8c8d; }
+.verdict-unclear .verdict { color: #f39c12; }
 
 .feedback-block form { display: flex; flex-direction: column; gap: 8px; }
 .feedback-block label { display: block; font-size: 12px; color: #555; }
