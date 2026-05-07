@@ -34,8 +34,25 @@ from send_outreach import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = REPO_ROOT / "runs"
-DEFAULT_RUN_ID = "2026-04-30"
 DB_PATH = Path(os.environ.get("FEEDBACK_DB_PATH") or (Path(__file__).resolve().parent / "feedback.db"))
+
+
+def list_available_runs() -> list[str]:
+    """Return run IDs that have profiles, sorted newest first."""
+    runs = []
+    if RUNS_DIR.is_dir():
+        for d in RUNS_DIR.iterdir():
+            if d.is_dir() and (d / "05_profiles" / "profiles").is_dir():
+                profiles = list((d / "05_profiles" / "profiles").glob("*.json"))
+                if profiles:
+                    runs.append(d.name)
+    runs.sort(reverse=True)
+    return runs
+
+
+def _default_run_id() -> str:
+    runs = list_available_runs()
+    return runs[0] if runs else "2026-04-30"
 def _is_dry_run() -> bool:
     return os.environ.get("SEND_MODE", "live").strip().lower() == "dry-run"
 _SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -519,9 +536,12 @@ def load_sales_leads(run_id: str, sender_name: str = "") -> list[dict]:
         company = profile.get("company") or {}
         body = profile.get("profile") or {}
         outreach = profile.get("outreach") or {}
+        generated_at = profile.get("generated_at", "")
         rows.append(
             {
                 "slug": json_path.stem,
+                "run_id": run_id,
+                "generated_at": generated_at[:10] if generated_at else "",
                 "display_name": company.get("display_name", ""),
                 "country": company.get("country", ""),
                 "rating": company.get("step4_rating", ""),
@@ -550,6 +570,14 @@ def load_sales_leads(run_id: str, sender_name: str = "") -> list[dict]:
             }
         )
     return rows
+
+
+def load_all_leads(sender_name: str = "") -> list[dict]:
+    """Load leads from all available runs, newest run first."""
+    all_rows: list[dict] = []
+    for run_id in list_available_runs():
+        all_rows.extend(load_sales_leads(run_id, sender_name=sender_name))
+    return all_rows
 
 
 def load_latest_feedback(slug: str, run_id: str) -> dict | None:
@@ -728,20 +756,20 @@ def _build_row_context(
 @app.get("/", response_class=HTMLResponse)
 def index(
     request: Request,
-    run: str = DEFAULT_RUN_ID,
     show_excluded: int = 0,
     current_user: str = Depends(require_auth),
 ) -> HTMLResponse:
     current_user_display = _user_display_name(current_user)
-    leads = load_sales_leads(run, sender_name=current_user_display)
+    leads = load_all_leads(sender_name=current_user_display)
     enriched = []
     excluded_count = 0
     include_excluded = show_excluded == 1
     for lead in leads:
-        latest = load_latest_feedback(lead["slug"], run)
-        history = load_history(lead["slug"], run)
-        latest_send = load_latest_send(lead["slug"], run)
-        latest_status = load_latest_status(lead["slug"], run)
+        run_id = lead["run_id"]
+        latest = load_latest_feedback(lead["slug"], run_id)
+        history = load_history(lead["slug"], run_id)
+        latest_send = load_latest_send(lead["slug"], run_id)
+        latest_status = load_latest_status(lead["slug"], run_id)
         if latest_status == EXCLUDED_STATUS:
             excluded_count += 1
             if not include_excluded:
@@ -760,7 +788,6 @@ def index(
         {
             "request": request,
             "rows": enriched,
-            "run_id": run,
             "current_user": current_user,
             "current_user_display": current_user_display,
             "current_user_is_admin": _user_is_admin(current_user),
@@ -781,7 +808,7 @@ async def submit_feedback(
 ) -> HTMLResponse:
     form = await request.form()
     slug = form.get("slug", "").strip()
-    run_id = form.get("run_id", DEFAULT_RUN_ID).strip() or DEFAULT_RUN_ID
+    run_id = form.get("run_id", _default_run_id()).strip() or _default_run_id()
     status = form.get("status", "").strip()
     tags = form.getlist("tags")
     note = form.get("note", "").strip()
@@ -808,7 +835,7 @@ async def exclude_lead(
 ) -> HTMLResponse:
     form = await request.form()
     slug = str(form.get("slug") or "").strip()
-    run_id = str(form.get("run_id") or DEFAULT_RUN_ID).strip() or DEFAULT_RUN_ID
+    run_id = str(form.get("run_id") or _default_run_id()).strip() or _default_run_id()
     if not slug:
         return HTMLResponse("missing required field", status_code=400)
 
@@ -830,7 +857,7 @@ async def restore_lead(
 ) -> HTMLResponse:
     form = await request.form()
     slug = str(form.get("slug") or "").strip()
-    run_id = str(form.get("run_id") or DEFAULT_RUN_ID).strip() or DEFAULT_RUN_ID
+    run_id = str(form.get("run_id") or _default_run_id()).strip() or _default_run_id()
     if not slug:
         return HTMLResponse("missing required field", status_code=400)
 
@@ -853,7 +880,7 @@ async def submit_send(
 ) -> HTMLResponse:
     form = await request.form()
     slug = str(form.get("slug") or "").strip()
-    run_id = str(form.get("run_id") or DEFAULT_RUN_ID).strip() or DEFAULT_RUN_ID
+    run_id = str(form.get("run_id") or _default_run_id()).strip() or _default_run_id()
     form_actual_to = str(form.get("form_actual_to") or "").strip()
     subject = str(form.get("subject") or "").strip()
     body = str(form.get("body") or "")

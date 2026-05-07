@@ -44,6 +44,7 @@ table.leads tr.excluded {
 table.leads tr.excluded td:first-child { border-left: 3px solid #ccc; }
 .num { color: #888; font-variant-numeric: tabular-nums; }
 .cname { font-weight: 600; }
+.run-date { font-size: 11px; color: #999; margin: 1px 0; }
 .weblink { font-size: 11px; color: #2980b9; text-decoration: none; word-break: break-all; }
 .email a { color: #2980b9; text-decoration: none; }
 .subject { max-width: 280px; }
