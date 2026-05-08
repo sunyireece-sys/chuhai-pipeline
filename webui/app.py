@@ -768,7 +768,8 @@ def load_sales_leads(run_id: str, sender_name: str = "") -> list[dict]:
     rows: list[dict] = []
     for json_path in sorted(profiles_dir.glob("*.json")):
         profile = _read_json(json_path)
-        if profile.get("outreach_mode") != "sales":
+        mode = profile.get("outreach_mode")
+        if mode and mode != "sales":
             continue
         contacts = _read_json(contacts_dir / json_path.name)
         emails = contacts.get("emails") or []
