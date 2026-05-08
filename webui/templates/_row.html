@@ -19,6 +19,7 @@
     >
       <input type="hidden" name="slug" value="{{ r.lead.slug }}">
       <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
+      <input type="hidden" name="is_test" value="{{ 1 if is_test else 0 }}">
       <select name="type">
         <option value="">— 未分类 —</option>
         {% for t in customer_type_options %}
@@ -52,6 +53,7 @@
     >
       <input type="hidden" name="slug" value="{{ r.lead.slug }}">
       <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
+      <input type="hidden" name="is_test" value="{{ 1 if is_test else 0 }}">
       <select name="status">
         {% for s in status_options %}
           <option value="{{ s }}" {% if r.lead_status.effective_status == s %}selected{% endif %}>{{ s }}</option>
@@ -71,6 +73,7 @@
         >
           <input type="hidden" name="slug" value="{{ r.lead.slug }}">
           <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
+          <input type="hidden" name="is_test" value="{{ 1 if is_test else 0 }}">
           <button type="submit" class="btn-exclude">恢复</button>
         </form>
       {% else %}
@@ -82,6 +85,7 @@
         >
           <input type="hidden" name="slug" value="{{ r.lead.slug }}">
           <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
+          <input type="hidden" name="is_test" value="{{ 1 if is_test else 0 }}">
           <button type="submit" class="btn-exclude">排除</button>
         </form>
       {% endif %}
@@ -104,6 +108,7 @@
           >
             <input type="hidden" name="slug" value="{{ r.lead.slug }}">
             <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
+            <input type="hidden" name="is_test" value="{{ 1 if is_test else 0 }}">
 
             <label>收件邮箱
               <input type="email" name="form_actual_to" value="{{ r.lead.email }}" placeholder="收件人邮箱">
@@ -117,6 +122,20 @@
               <textarea name="body" rows="10" required>{{ r.lead.body }}</textarea>
             </label>
 
+            <div class="translate-bar">
+              <select class="lang-select">
+                <option value="">— 翻译成 —</option>
+                <option value="Turkish">土耳其语</option>
+                <option value="Russian">俄语</option>
+                <option value="French">法语</option>
+                <option value="German">德语</option>
+                <option value="Japanese">日语</option>
+                <option value="Korean">韩语</option>
+              </select>
+              <button type="button" class="btn-translate" onclick="translateEmail(this)">翻译</button>
+              <span class="translate-status"></span>
+            </div>
+
             <label>WhatsApp / LinkedIn
               <textarea name="whatsapp" rows="4">{{ r.lead.whatsapp }}</textarea>
             </label>
@@ -126,7 +145,7 @@
             </label>
 
             <button type="submit" class="btn-send {% if send_mode == 'dry-run' %}btn-dryrun{% endif %}">
-              {% if send_mode == 'dry-run' %}🧪 Dry-run 发送{% else %}📤 发送邮件{% endif %}
+              {% if is_test %}📤 测试 live 发送{% elif send_mode == 'dry-run' %}🧪 Dry-run 发送{% else %}📤 发送邮件{% endif %}
             </button>
           </form>
         </section>
@@ -171,6 +190,7 @@
           >
             <input type="hidden" name="slug" value="{{ r.lead.slug }}">
             <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
+            <input type="hidden" name="is_test" value="{{ 1 if is_test else 0 }}">
             <input type="hidden" name="status" value="{{ r.lead_status.effective_status }}">
 
             <fieldset class="tags">

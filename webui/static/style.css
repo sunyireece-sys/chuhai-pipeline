@@ -16,6 +16,18 @@ header {
 header h1 { margin: 0 0 4px; font-size: 18px; }
 header .meta { font-size: 12px; opacity: 0.85; }
 main { padding: 16px 24px 80px; }
+.btn-secondary {
+  display: inline-block;
+  padding: 3px 10px;
+  background: #f0f0f0;
+  color: #333;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  text-decoration: none;
+  font-size: 12px;
+}
+.btn-secondary:hover { background: #e0e0e0; }
+header .btn-secondary { color: #333; }
 
 table.leads {
   width: 100%;
@@ -62,6 +74,7 @@ table.leads tr.excluded td:first-child { border-left: 3px solid #ccc; }
 .status-已发 { background: #f1c40f; color: #fff; }
 .status-已发待回 { background: #f1c40f; color: #fff; }
 .status-已收到有效回复 { background: #3498db; color: #fff; }
+.status-已询价 { background: #f39c12; color: #fff; }
 .status-已回 { background: #3498db; color: #fff; }
 .status-已成交 { background: #27ae60; color: #fff; }
 .status-不相关, .status-邮箱无效, .status-国家错, .status-联系人不对 { background: #e67e22; color: #fff; }
@@ -162,6 +175,32 @@ details[open] summary { background: #34495e; color: #fff; }
   line-height: 1.45;
   resize: vertical;
 }
+.translate-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: -2px;
+}
+.lang-select {
+  max-width: 150px;
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+}
+.btn-translate {
+  padding: 4px 12px;
+  background: #5b9bd5;
+  color: #fff;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.btn-translate:hover { background: #4a8bc4; }
+.btn-translate:disabled {
+  background: #bdc3c7;
+  cursor: not-allowed;
+}
+.translate-status { font-size: 12px; color: #666; }
 .btn-send {
   align-self: flex-start;
   padding: 7px 16px;
@@ -255,6 +294,44 @@ details[open] summary { background: #34495e; color: #fff; }
 .verdict-rejection .verdict { color: #e74c3c; }
 .verdict-auto-reply .verdict { color: #7f8c8d; }
 .verdict-unclear .verdict { color: #f39c12; }
+
+.test-banner {
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  border: 1px solid #f5c16c;
+  border-left: 4px solid #f39c12;
+  background: #fff7e6;
+  color: #7d4f00;
+  font-weight: 600;
+}
+.delete-test-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+}
+.delete-test-form label {
+  font-size: 12px;
+  color: #555;
+}
+.delete-test-form input {
+  display: block;
+  min-width: 220px;
+  margin-top: 2px;
+  padding: 5px 7px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+}
+.inbox-list { max-width: 980px; }
+.inbox-card { margin-bottom: 10px; }
+.inbox-card a {
+  color: #2980b9;
+  text-decoration: none;
+  font-weight: 600;
+}
 
 .feedback-block form { display: flex; flex-direction: column; gap: 8px; }
 .feedback-block label { display: block; font-size: 12px; color: #555; }

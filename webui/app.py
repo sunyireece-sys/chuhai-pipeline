@@ -60,24 +60,44 @@ async def lifespan(app: FastAPI):
     yield
 
 
-def list_available_runs() -> list[str]:
-    """Return run IDs that have profiles, sorted newest first."""
+def _list_runs(include_test: bool) -> list[str]:
     runs = []
     if RUNS_DIR.is_dir():
         for d in RUNS_DIR.iterdir():
             if d.is_dir() and (d / "05_profiles" / "profiles").is_dir():
                 profiles = list((d / "05_profiles" / "profiles").glob("*.json"))
                 if profiles:
+                    is_test = d.name.startswith("test_")
+                    if is_test != include_test:
+                        continue
                     runs.append(d.name)
     runs.sort(reverse=True)
     return runs
 
 
+def list_available_runs() -> list[str]:
+    """Return non-test run IDs that have profiles, sorted newest first."""
+    return _list_runs(include_test=False)
+
+
+def list_test_runs() -> list[str]:
+    """Return test run IDs that have profiles, sorted newest first."""
+    return _list_runs(include_test=True)
+
+
 def _default_run_id() -> str:
     runs = list_available_runs()
     return runs[0] if runs else "2026-04-30"
+
+
 def _is_dry_run() -> bool:
     return os.environ.get("SEND_MODE", "live").strip().lower() == "dry-run"
+
+
+def _is_test_run(run_id: str) -> bool:
+    return str(run_id or "").startswith("test_")
+
+
 _SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 STATUS_OPTIONS = [
@@ -171,6 +191,37 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
 def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, ddl: str) -> None:
     if column_name not in _table_columns(conn, table_name):
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {ddl}")
+
+
+def _profile_company_name(run_id: str, slug: str) -> str:
+    if not (_safe_path_component(run_id) and _safe_path_component(slug)):
+        return ""
+    path = RUNS_DIR / run_id / "05_profiles" / "profiles" / f"{slug}.json"
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            profile = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    company = profile.get("company") if isinstance(profile, dict) else {}
+    if not isinstance(company, dict):
+        return ""
+    return str(company.get("display_name") or company.get("legal_name") or "").strip()
+
+
+def _backfill_reply_company_names(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, profile_slug, run_id FROM received_replies
+        WHERE company_name = '' AND profile_slug IS NOT NULL AND run_id IS NOT NULL
+        """
+    ).fetchall()
+    for row in rows:
+        company_name = _profile_company_name(row["run_id"], row["profile_slug"])
+        if company_name:
+            conn.execute(
+                "UPDATE received_replies SET company_name = ? WHERE id = ?",
+                (company_name, row["id"]),
+            )
 
 
 def _map_feedback_status_to_manual(status_value: str) -> str | None:
@@ -294,6 +345,7 @@ def _init_db() -> None:
                 actual_to TEXT NOT NULL,
                 original_to TEXT NOT NULL,
                 message_id TEXT,
+                is_test INTEGER NOT NULL DEFAULT 0,
                 send_status TEXT NOT NULL,
                 smtp_response TEXT,
                 send_error TEXT,
@@ -307,6 +359,7 @@ def _init_db() -> None:
             "ON send_tracking(profile_slug, run_id, submitted_at DESC)"
         )
         _ensure_column(conn, "send_tracking", "message_id", "message_id TEXT")
+        _ensure_column(conn, "send_tracking", "is_test", "is_test INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS received_replies (
@@ -316,6 +369,7 @@ def _init_db() -> None:
                 in_reply_to TEXT,
                 profile_slug TEXT,
                 run_id TEXT,
+                company_name TEXT NOT NULL DEFAULT '',
                 received_at TEXT NOT NULL,
                 from_email TEXT NOT NULL,
                 subject TEXT NOT NULL,
@@ -336,6 +390,7 @@ def _init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_replies_from "
             "ON received_replies(from_email)"
         )
+        _ensure_column(conn, "received_replies", "company_name", "company_name TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS lead_status (
@@ -465,6 +520,7 @@ def _init_db() -> None:
         )
         _seed_initial_users(conn)
         _migrate_lead_status(conn)
+        _backfill_reply_company_names(conn)
 
 
 _init_db()
@@ -760,10 +816,10 @@ def load_sales_leads(run_id: str, sender_name: str = "") -> list[dict]:
     return rows
 
 
-def load_all_leads(sender_name: str = "") -> list[dict]:
-    """Load leads from all available runs, newest run first."""
+def load_all_leads(sender_name: str = "", runs: list[str] | None = None) -> list[dict]:
+    """Load leads from selected runs, newest run first."""
     all_rows: list[dict] = []
-    for run_id in list_available_runs():
+    for run_id in (runs if runs is not None else list_available_runs()):
         all_rows.extend(load_sales_leads(run_id, sender_name=sender_name))
     return all_rows
 
@@ -1024,7 +1080,7 @@ def get_received_replies(slug: str, run_id: str) -> list[dict]:
 
 
 def _send_count(conn: sqlite3.Connection, submitted_by: str | None, start_date: str | None = None) -> int:
-    conditions = ["send_status = 'sent'"]
+    conditions = ["send_status = 'sent'", "run_id NOT LIKE 'test_%'", "is_test = 0"]
     params: list[object] = []
     if submitted_by:
         conditions.append("submitted_by = ?")
@@ -1045,7 +1101,7 @@ def _sent_lead_set(
     submitted_by: str | None,
     start_date: str | None = None,
 ) -> set[tuple[str, str]]:
-    conditions = ["send_status = 'sent'"]
+    conditions = ["send_status = 'sent'", "run_id NOT LIKE 'test_%'", "is_test = 0"]
     params: list[object] = []
     if submitted_by:
         conditions.append("submitted_by = ?")
@@ -1071,6 +1127,7 @@ def _reply_lead_set(
     conditions = [
         "profile_slug IS NOT NULL",
         "run_id IS NOT NULL",
+        "run_id NOT LIKE 'test_%'",
         "llm_verdict IN ({})".format(", ".join("?" for _ in verdicts)),
     ]
     params: list[object] = list(verdicts)
@@ -1093,7 +1150,8 @@ def _status_lead_set(
 ) -> set[tuple[str, str]]:
     sql = (
         "SELECT profile_slug, run_id FROM lead_status "
-        "WHERE effective_status IN ({})".format(", ".join("?" for _ in statuses))
+        "WHERE run_id NOT LIKE 'test_%' "
+        "AND effective_status IN ({})".format(", ".join("?" for _ in statuses))
     )
     return {
         _lead_key(row["profile_slug"], row["run_id"])
@@ -1285,6 +1343,7 @@ def _build_row_context(
     run_id: str,
     leads: list[dict] | None = None,
     sender_name: str = "",
+    is_test: bool | None = None,
 ) -> dict:
     leads = leads if leads is not None else load_sales_leads(
         run_id,
@@ -1300,6 +1359,7 @@ def _build_row_context(
     lead_status = get_lead_status(slug, run_id)
     customer_type = get_customer_type(slug, run_id)
     received_replies = get_received_replies(slug, run_id)
+    row_is_test = _is_test_run(run_id) if is_test is None else is_test
     return {
         "r": {
             "lead": lead,
@@ -1315,7 +1375,8 @@ def _build_row_context(
         "status_options": STATUS_OPTIONS,
         "customer_type_options": CUSTOMER_TYPE_OPTIONS,
         "tag_options": TAG_OPTIONS,
-        "send_mode": "dry-run" if _is_dry_run() else "live",
+        "send_mode": "live" if row_is_test else ("dry-run" if _is_dry_run() else "live"),
+        "is_test": row_is_test,
         "truncate": _truncate,
     }
 
@@ -1357,7 +1418,7 @@ def _dashboard_payload(
                        SUM(CASE WHEN date(submitted_at) >= ? THEN 1 ELSE 0 END) AS sends_week,
                        count(*) AS sends_total
                 FROM send_tracking
-                WHERE send_status = 'sent'
+                WHERE send_status = 'sent' AND run_id NOT LIKE 'test_%' AND is_test = 0
                 GROUP BY submitted_by
                 ORDER BY sends_total DESC, submitted_by
                 """,
@@ -1432,6 +1493,7 @@ def index(
             "customer_type_options": CUSTOMER_TYPE_OPTIONS,
             "tag_options": TAG_OPTIONS,
             "send_mode": "dry-run" if _is_dry_run() else "live",
+            "is_test": False,
             "truncate": _truncate,
             "dash_total_leads": dash["total_leads"],
             "dash_sends_today": dash["sends_today"],
@@ -1444,6 +1506,102 @@ def index(
             "dash_people": dash["people"],
         },
     )
+
+
+@app.get("/test", response_class=HTMLResponse)
+def test_index(
+    request: Request,
+    current_user: str = Depends(require_auth),
+) -> HTMLResponse:
+    current_user_display = _user_display_name(current_user)
+    test_runs = list_test_runs()
+    leads = load_all_leads(sender_name=current_user_display, runs=test_runs)
+    enriched = []
+    for lead in leads:
+        run_id = lead["run_id"]
+        latest = load_latest_feedback(lead["slug"], run_id)
+        history = load_history(lead["slug"], run_id)
+        latest_send = load_latest_send(lead["slug"], run_id)
+        latest_status = load_latest_status(lead["slug"], run_id)
+        lead_status = get_lead_status(lead["slug"], run_id)
+        customer_type = get_customer_type(lead["slug"], run_id)
+        received_replies = get_received_replies(lead["slug"], run_id)
+        enriched.append(
+            {
+                "lead": lead,
+                "latest": latest,
+                "history": history,
+                "latest_send": latest_send,
+                "status": latest_status,
+                "lead_status": lead_status,
+                "customer_type": customer_type,
+                "received_replies": received_replies,
+            }
+        )
+    return templates.TemplateResponse(
+        "test.html",
+        {
+            "request": request,
+            "rows": enriched,
+            "current_user": current_user,
+            "current_user_display": current_user_display,
+            "current_user_is_admin": _user_is_admin(current_user),
+            "status_options": STATUS_OPTIONS,
+            "customer_type_options": CUSTOMER_TYPE_OPTIONS,
+            "tag_options": TAG_OPTIONS,
+            "send_mode": "live",
+            "is_test": True,
+            "truncate": _truncate,
+        },
+    )
+
+
+@app.post("/test/delete")
+async def delete_test_data(
+    request: Request,
+    _: str = Depends(require_admin),
+) -> RedirectResponse:
+    form = await request.form()
+    confirm_text = str(form.get("confirm_text") or "").strip()
+    if confirm_text != "删除测试数据":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="confirm_text must be 删除测试数据",
+        )
+
+    with _db() as conn:
+        test_class_rows = conn.execute(
+            "SELECT id, profile_slug FROM edit_classifications WHERE run_id LIKE 'test_%'"
+        ).fetchall()
+        test_class_ids = [row["id"] for row in test_class_rows]
+        test_slugs = {row["profile_slug"] for row in test_class_rows}
+        if test_class_ids:
+            placeholders = ", ".join("?" for _ in test_class_ids)
+            conn.execute(
+                f"DELETE FROM content_flags WHERE classification_id IN ({placeholders})",
+                test_class_ids,
+            )
+            conn.execute(
+                f"DELETE FROM edit_classifications WHERE id IN ({placeholders})",
+                test_class_ids,
+            )
+        if test_slugs:
+            placeholders = ", ".join("?" for _ in test_slugs)
+            conn.execute(
+                f"DELETE FROM tone_examples WHERE profile_slug IN ({placeholders})",
+                list(test_slugs),
+            )
+
+        conn.execute("DELETE FROM content_flags WHERE run_id LIKE 'test_%'")
+        conn.execute("DELETE FROM received_replies WHERE run_id LIKE 'test_%'")
+        conn.execute("DELETE FROM send_tracking WHERE is_test = 1 OR run_id LIKE 'test_%'")
+        conn.execute("DELETE FROM feedback WHERE run_id LIKE 'test_%'")
+        conn.execute("DELETE FROM lead_status WHERE run_id LIKE 'test_%'")
+        conn.execute("DELETE FROM status_change_log WHERE run_id LIKE 'test_%'")
+        conn.execute("DELETE FROM customer_type WHERE run_id LIKE 'test_%'")
+        conn.execute("DELETE FROM customer_type_change_log WHERE run_id LIKE 'test_%'")
+
+    return RedirectResponse("/test", status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post("/feedback", response_class=HTMLResponse)
@@ -1578,6 +1736,7 @@ async def submit_send(
     form = await request.form()
     slug = str(form.get("slug") or "").strip()
     run_id = str(form.get("run_id") or _default_run_id()).strip() or _default_run_id()
+    is_test = str(form.get("is_test") or ("1" if _is_test_run(run_id) else "0")).strip() == "1"
     form_actual_to = str(form.get("form_actual_to") or "").strip()
     subject = str(form.get("subject") or "").strip()
     body = str(form.get("body") or "")
@@ -1598,7 +1757,7 @@ async def submit_send(
     if not original["subject"] or not original["body"]:
         return HTMLResponse("original outreach content not found", status_code=422)
 
-    dry_run = _is_dry_run()
+    dry_run = False if is_test else _is_dry_run()
     test_recipient = (os.environ.get("SMTP_TEST_RECIPIENT") or "").strip() if dry_run else ""
     try:
         config = load_send_config(live=not dry_run, test_recipient=test_recipient, sleep_s=0)
@@ -1644,10 +1803,11 @@ async def submit_send(
                 original_subject, original_body, original_whatsapp, original_follow_up,
                 sent_subject, sent_body, sent_whatsapp, sent_follow_up,
                 subject_edited, body_edited, whatsapp_edited, follow_up_edited,
-                mode, actual_to, original_to, message_id, send_status, smtp_response, send_error,
+                mode, actual_to, original_to, message_id, is_test,
+                send_status, smtp_response, send_error,
                 submitted_by, submitted_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 slug,
@@ -1668,6 +1828,7 @@ async def submit_send(
                 actual_to,
                 original_to,
                 message_id,
+                int(is_test),
                 send_status,
                 smtp_response,
                 send_error,
@@ -1703,6 +1864,7 @@ async def submit_send(
             "timestamp": submitted_at,
             "slug": slug,
             "mode": "dry-run" if dry_run else "live",
+            "is_test": is_test,
             "original_to": original_to,
             "actual_to": actual_to,
             "message_id": message_id,
@@ -1721,13 +1883,97 @@ async def submit_send(
         },
     )
 
-    ctx = _build_row_context(slug, run_id, sender_name=submitted_by)
+    ctx = _build_row_context(slug, run_id, sender_name=submitted_by, is_test=is_test)
     if not ctx:
         return HTMLResponse("profile not found", status_code=404)
     ctx["request"] = request
     ctx["current_user"] = current_user
     ctx["current_user_display"] = submitted_by
     return templates.TemplateResponse("_row.html", ctx)
+
+
+@app.get("/inbox", response_class=HTMLResponse)
+def inbox(
+    request: Request,
+    current_user: str = Depends(require_auth),
+) -> HTMLResponse:
+    with _db() as conn:
+        rows = conn.execute(
+            """
+            SELECT r.*, ls.effective_status
+            FROM received_replies r
+            LEFT JOIN lead_status ls
+              ON r.profile_slug = ls.profile_slug AND r.run_id = ls.run_id
+            WHERE r.run_id IS NULL OR r.run_id NOT LIKE 'test_%'
+            ORDER BY r.received_at DESC, r.id DESC
+            LIMIT 200
+            """
+        ).fetchall()
+    replies = []
+    for row in rows:
+        item = dict(row)
+        item["matched"] = bool(item.get("profile_slug") and item.get("run_id"))
+        replies.append(item)
+    return templates.TemplateResponse(
+        "inbox.html",
+        {
+            "request": request,
+            "replies": replies,
+            "current_user": current_user,
+            "current_user_display": _user_display_name(current_user),
+        },
+    )
+
+
+@app.post("/translate")
+async def translate_text(
+    request: Request,
+    _: str = Depends(require_auth),
+) -> dict[str, str]:
+    form = await request.form()
+    text = str(form.get("text") or "")
+    target_lang = str(form.get("target_lang") or "").strip()
+    allowed_langs = {"Turkish", "Russian", "French", "German", "Japanese", "Korean"}
+    if not text.strip() or target_lang not in allowed_langs:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="text and supported target_lang are required",
+        )
+
+    api_key = (
+        os.environ.get("GLM_API_KEY")
+        or os.environ.get("LLM_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or ""
+    ).strip()
+    if not api_key:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="LLM API key not set")
+
+    prompt = (
+        f"Translate the following sales outreach email text to {target_lang}. "
+        "Return only the translated text, no explanation:\n\n"
+        f"{text[:12000]}"
+    )
+    try:
+        from openai import OpenAI
+
+        client_kwargs: dict = {"api_key": api_key}
+        base_url = (os.environ.get("LLM_BASE_URL") or "").strip()
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client_kwargs["timeout"] = float(os.environ.get("LLM_TIMEOUT_SECONDS", "30"))
+        client = OpenAI(**client_kwargs)
+        response = client.chat.completions.create(
+            model=os.environ.get("LLM_MODEL", "glm-4-flash"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+    except Exception as exc:
+        detail = _truncate(str(exc).replace(api_key, "***"), 500)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=detail) from exc
+
+    translated = str(response.choices[0].message.content or "").strip()
+    return {"translated": translated}
 
 
 @app.get("/dashboard", response_class=HTMLResponse)

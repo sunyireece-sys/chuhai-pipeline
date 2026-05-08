@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>收件箱</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>收件箱</h1>
+  <div class="meta">
+    最近 {{ replies|length }} 封回复
+    {% if current_user_display %} · 欢迎，<strong>{{ current_user_display }}</strong>{% endif %}
+    · <a href="/" class="btn-secondary">返回主页</a>
+    · <a href="/test" class="btn-secondary">测试发送</a>
+  </div>
+</header>
+
+<main>
+  <section class="inbox-list">
+    {% for reply in replies %}
+      <article class="reply-card inbox-card verdict-{{ reply.llm_verdict or 'unclear' }}">
+        <div class="reply-meta">
+          {% if reply.matched %}
+            <a href="/#row-{{ reply.run_id }}-{{ reply.profile_slug }}">
+              {{ reply.company_name or reply.profile_slug }}
+            </a>
+          {% else %}
+            <span class="muted">未能匹配</span>
+          {% endif %}
+          · {{ reply.from_email }} · {{ reply.received_at[:16] }}
+          · <span class="verdict">{{ reply.llm_verdict or 'unclear' }}</span>
+          {% if reply.effective_status %} · {{ reply.effective_status }}{% endif %}
+        </div>
+        <div class="reply-subject">{{ reply.subject }}</div>
+        <pre class="reply-body">{{ reply.body_text[:300] }}</pre>
+      </article>
+    {% else %}
+      <p class="muted">暂无收到的回复。</p>
+    {% endfor %}
+  </section>
+</main>
+</body>
+</html>

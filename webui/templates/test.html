@@ -2,35 +2,38 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>Sales Feedback</title>
+<title>测试发送</title>
 <link rel="stylesheet" href="/static/style.css">
 <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <script src="/static/translate.js"></script>
 </head>
 <body>
 <header>
-  <h1>Sales Feedback</h1>
+  <h1>测试发送</h1>
   <div class="meta">
-    共 {{ rows|length }} 家公司
+    共 {{ rows|length }} 家测试公司
     {% if current_user_display %} · 欢迎，<strong>{{ current_user_display }}</strong>{% endif %}
-    {% if current_user_is_admin %} · <a href="/admin">Admin</a>{% endif %}
-    · <a href="/test" class="btn-secondary">测试发送</a>
+    · <a href="/" class="btn-secondary">返回主页</a>
     · <a href="/inbox" class="btn-secondary">收件箱</a>
-  </div>
-  <div class="meta">
-    {% if show_excluded %}
-      正在显示已排除 lead · <a href="/">隐藏已排除</a>
-    {% else %}
-      已排除 {{ excluded_count }} 条 · <a href="/?show_excluded=1">点击显示</a>
-    {% endif %}
   </div>
 </header>
 
 <main>
-  <details class="dashboard-panel" open>
-    <summary>📊 我的 Dashboard</summary>
-    {% include "_dashboard_panel.html" with context %}
-  </details>
+  <div class="test-banner">测试模式 — 数据不计入正式统计，发送为 live 模式</div>
+
+  {% if current_user_is_admin %}
+    <form
+      class="delete-test-form"
+      method="post"
+      action="/test/delete"
+      onsubmit="return confirm('确认删除全部测试发送、回复和状态记录？runs/test_* 文件不会删除。')"
+    >
+      <label>删除确认
+        <input type="text" name="confirm_text" placeholder="输入：删除测试数据">
+      </label>
+      <button type="submit" class="btn-exclude">删除全部测试数据</button>
+    </form>
+  {% endif %}
 
   <table class="leads">
     <thead>

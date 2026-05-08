@@ -13,6 +13,9 @@ from email.parser import BytesParser
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+RUNS_DIR = REPO_ROOT / "runs"
+
 AUTO_REPLY_RE = re.compile(
     r"\b(out of office|auto-reply|automatic reply|vacation|away from)\b",
     re.IGNORECASE,
@@ -22,12 +25,34 @@ REJECTION_RE = re.compile(
     re.IGNORECASE,
 )
 MSGID_RE = re.compile(r"<[^>]+>")
+SAFE_COMPONENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _db(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _safe_path_component(value: str) -> bool:
+    return bool(SAFE_COMPONENT_RE.match(value or ""))
+
+
+def _profile_company_name(run_id: str | None, slug: str | None) -> str:
+    if not run_id or not slug:
+        return ""
+    if not (_safe_path_component(run_id) and _safe_path_component(slug)):
+        return ""
+    path = RUNS_DIR / run_id / "05_profiles" / "profiles" / f"{slug}.json"
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            profile = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return ""
+    company = profile.get("company") if isinstance(profile, dict) else {}
+    if not isinstance(company, dict):
+        return ""
+    return str(company.get("display_name") or company.get("legal_name") or "").strip()
 
 
 def _decode_header(value: object) -> str:
@@ -311,6 +336,7 @@ def poll_once(db_path: Path) -> None:
                     from_email=from_email,
                     in_reply_to=in_reply_to,
                 )
+                company_name = _profile_company_name(run_id, profile_slug)
                 result = _judge_reply(subject, body_text)
                 verdict = str(result.get("verdict") or "unclear").strip().lower()
                 reasoning = str(result.get("reason") or "").strip()
@@ -319,10 +345,10 @@ def poll_once(db_path: Path) -> None:
                     """
                     INSERT OR IGNORE INTO received_replies (
                         imap_uid, message_id, in_reply_to, profile_slug, run_id,
-                        received_at, from_email, subject, body_text, match_method,
+                        company_name, received_at, from_email, subject, body_text, match_method,
                         llm_verdict, llm_reasoning, judged_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         imap_uid,
@@ -330,6 +356,7 @@ def poll_once(db_path: Path) -> None:
                         in_reply_to,
                         profile_slug,
                         run_id,
+                        company_name,
                         received_at,
                         from_email,
                         subject,
