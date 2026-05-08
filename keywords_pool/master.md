@@ -9,6 +9,8 @@
 - Italy
 - Spain
 - Sweden
+- Turkey
+- Russia
 
 # ANCHOR
 - goji berry importer

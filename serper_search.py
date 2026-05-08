@@ -44,6 +44,10 @@ COUNTRY_CODE = {
     "new zealand": "nz",
     "mexico": "mx",
     "brazil": "br",
+    "turkey": "tr",
+    "türkiye": "tr",
+    "russia": "ru",
+    "russian federation": "ru",
 }
 
 
@@ -77,6 +81,8 @@ def normalize_country(country: str) -> tuple[str, str]:
         "nz": "New Zealand",
         "mx": "Mexico",
         "br": "Brazil",
+        "tr": "Turkey",
+        "ru": "Russia",
     }.get(code, country.strip().title())
     return display, code
 
