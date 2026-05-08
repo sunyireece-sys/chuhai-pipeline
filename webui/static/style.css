@@ -532,12 +532,12 @@ ul.history .note { margin-top: 2px; color: var(--text-2); }
 }
 .metric-label { color: var(--text-3); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
 .metric-value {
-  font-family: 'Syne', -apple-system, sans-serif;
   font-size: 34px;
   font-weight: 800;
   margin-top: 6px;
   color: var(--text);
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .dashboard-grid {
@@ -583,7 +583,6 @@ ul.history .note { margin-top: 2px; color: var(--text-2); }
 .funnel-bar.bar-closed  { background: #6b46c1; }
 .funnel-count {
   width: 36px;
-  font-family: 'Syne', sans-serif;
   font-size: 13px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -593,11 +592,11 @@ ul.history .note { margin-top: 2px; color: var(--text-2); }
 .funnel-pct  { width: 44px; font-size: 11px; color: var(--text-3); }
 .funnel-conv { width: 60px; font-size: 11px; color: #c5bbb0; }
 .funnel-total-row {
-  font-family: 'Syne', -apple-system, sans-serif;
   font-size: 22px;
   font-weight: 800;
   margin-bottom: 14px;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 .funnel-new-badge {
   font-family: -apple-system, "PingFang SC", sans-serif;
@@ -632,6 +631,63 @@ ul.history .note { margin-top: 2px; color: var(--text-2); }
 .type-legend div:nth-child(2) .legend-dot { background: #27ae60; }
 .type-legend div:nth-child(3) .legend-dot { background: var(--amber); }
 .type-legend div:nth-child(4) .legend-dot { background: var(--border-dark); }
+
+/* ── Row & company cell polish ─────────────────────────────── */
+.cname { font-size: 13.5px; }
+
+.run-date {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--text-3);
+  background: #ede8e1;
+  padding: 0 5px;
+  border-radius: 20px;
+  margin-top: 3px;
+}
+
+/* Expand / collapse toggle with chevron */
+details summary {
+  position: relative;
+  padding-right: 22px;
+  user-select: none;
+}
+details summary::after {
+  content: '›';
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%) rotate(90deg);
+  font-size: 14px;
+  transition: transform 0.2s;
+  opacity: 0.6;
+}
+details[open] summary::after {
+  transform: translateY(-50%) rotate(-90deg);
+}
+
+/* Detail box section headings */
+.detail-box h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-top: 14px;
+}
+.detail-box h4:first-child { margin-top: 0; }
+
+/* Send log left accent color by status */
+.send-log.status-sent  { border-left-color: #27ae60; }
+.send-log.status-error { border-left-color: var(--accent); }
+
+/* Tighter email cell */
+.email { min-width: 160px; }
+
+/* Subject column subtle styling */
+.subject { color: var(--text-2); font-size: 12px; }
+
+/* Table action column */
+table.leads td:last-child { white-space: nowrap; }
 
 @media (max-width: 800px) {
   .metric-grid,
