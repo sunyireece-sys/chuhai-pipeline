@@ -11,6 +11,8 @@ COPY send_outreach.py schema.py supplier_profile.json /app/
 # DATA-BEGIN
 COPY runs/2026-04-30/05_profiles/profiles /app/runs/2026-04-30/05_profiles/profiles
 COPY runs/2026-04-30/05_profiles/contacts /app/runs/2026-04-30/05_profiles/contacts
+COPY runs/2026-05-07_goji_de_fr_gb_nl/05_profiles/profiles /app/runs/2026-05-07_goji_de_fr_gb_nl/05_profiles/profiles
+COPY runs/2026-05-07_goji_de_fr_gb_nl/05_profiles/contacts /app/runs/2026-05-07_goji_de_fr_gb_nl/05_profiles/contacts
 COPY runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/profiles /app/runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/profiles
 COPY runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/contacts /app/runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/contacts
 # DATA-END
