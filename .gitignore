@@ -15,3 +15,5 @@ webui/.users.json
 webui/__pycache__/
 .claude/
 .codex/
+.superpowers/
+redvia/
