@@ -85,7 +85,9 @@ export default {
       }
 
       if (url.pathname === '/api/event' && request.method === 'POST') {
-        return await handleEvent(request, env);
+        const resp = await handleEvent(request, env);
+        ctx.waitUntil(syncEvents(env).catch((e) => console.error('inline_sync_failed', e)));
+        return resp;
       }
 
       if (url.pathname === '/api/chat' && request.method === 'POST') {

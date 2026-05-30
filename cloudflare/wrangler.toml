@@ -25,4 +25,4 @@ ALLOWED_ORIGINS = ""
 MATCH_API_BASE_URL = "https://chuhai-webui.fly.dev"
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["* * * * *"]
