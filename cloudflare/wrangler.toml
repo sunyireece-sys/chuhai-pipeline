@@ -1,4 +1,3 @@
-$schema = "./node_modules/wrangler/config-schema.json"
 name = "redvia-tracking"
 main = "src/worker.mjs"
 compatibility_date = "2026-05-20"
@@ -11,7 +10,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "redvia_tracking"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "090495dd-fd9e-4fed-9901-29a6bdb3e563"
 migrations_dir = "migrations"
 
 [vars]
