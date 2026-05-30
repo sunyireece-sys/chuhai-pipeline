@@ -1,0 +1,29 @@
+$schema = "./node_modules/wrangler/config-schema.json"
+name = "redvia-tracking"
+main = "src/worker.mjs"
+compatibility_date = "2026-05-20"
+workers_dev = true
+
+[assets]
+directory = "../web_claude"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "redvia_tracking"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[vars]
+SITE_URL = "https://redvia.com"
+COOKIE_DOMAIN = ".redvia.com"
+COOKIE_MAX_AGE = "7776000"
+TOKEN_TTL_DAYS = "14"
+EVENT_SYNC_LIMIT = "500"
+ALLOWED_ORIGINS = ""
+# Optional while the static site is still served by this Worker and webUI lives elsewhere.
+# Set to the sales webUI origin, for example "https://chuhai-webui.fly.dev".
+MATCH_API_BASE_URL = "https://chuhai-webui.fly.dev"
+
+[triggers]
+crons = ["*/5 * * * *"]
