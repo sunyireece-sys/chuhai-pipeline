@@ -1,7 +1,11 @@
 <tr id="row-{{ r.lead.run_id }}-{{ r.lead.slug }}" class="lead-row {% if r.latest %}has-feedback{% endif %} {% if r.status == 'excluded' %}excluded{% endif %}">
   <td class="num">{{ r.lead.slug.split('-')[0] }}</td>
   <td>
-    <div class="cname">{{ r.lead.display_name }}</div>
+    <div class="cname">
+      {{ r.lead.display_name }}
+      {% set p = r.lead.lead_priority if r.lead.lead_priority is defined else 0.5 %}
+      <span class="priority-badge priority-{% if p >= 0.75 %}high{% elif p >= 0.4 %}mid{% else %}low{% endif %}">P{{ "%.0f"|format(p * 100) }}</span>
+    </div>
     {% if r.lead.generated_at %}
       <div class="run-date">{{ r.lead.generated_at }}</div>
     {% endif %}
@@ -11,6 +15,14 @@
   </td>
   <td>{{ r.lead.country }}</td>
   <td class="ctype">
+    {% set ct = r.customer_type %}
+    {% if ct and ct.effective_type %}
+      <span class="ctype-badge ctype-{{ ct.effective_type }}">
+        {{ ct.effective_type }}{% if ct.is_manual_override %} ✏️{% endif %}
+      </span>
+    {% else %}
+      <span class="ctype-badge ctype-unknown">未分类</span>
+    {% endif %}
     <form
       hx-post="/set-customer-type"
       hx-target="#row-{{ r.lead.run_id }}-{{ r.lead.slug }}"
@@ -21,9 +33,9 @@
       <input type="hidden" name="run_id" value="{{ r.lead.run_id }}">
       <input type="hidden" name="is_test" value="{{ 1 if is_test else 0 }}">
       <select name="type">
-        <option value="">— 未分类 —</option>
+        <option value="">— 跟随 LLM —</option>
         {% for t in customer_type_options %}
-          <option value="{{ t }}" {% if r.customer_type and r.customer_type.type == t %}selected{% endif %}>{{ t }}</option>
+          <option value="{{ t }}" {% if ct and ct.manual_type == t %}selected{% endif %}>{{ t }}</option>
         {% endfor %}
       </select>
     </form>

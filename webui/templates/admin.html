@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Admin - Sales Feedback</title>
-<link rel="stylesheet" href="/static/style.css?v=4">
+<link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
 <header>
@@ -41,6 +41,49 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <h2>AI Synthesis</h2>
+  {% if synthesis_flash == "queued" %}
+    <p class="flash-info">已加入队列，约 1 分钟后刷新本页查看结果。</p>
+  {% endif %}
+
+  {% if last_synthesis %}
+    <p class="meta">
+      上次：{{ last_synthesis.run_at[:16] }}
+      · 触发：{{ last_synthesis.triggered_by }}
+      · {{ last_synthesis.valid_reply_count }} 条有效回复
+      / {{ last_synthesis.content_flag_count }} 条事实错误
+      / {{ last_synthesis.feedback_count }} 条编辑
+    </p>
+    <blockquote class="synthesis-summary">{{ last_synthesis.summary or "（无摘要）" }}</blockquote>
+
+    {% set suggestions = last_synthesis.prompt_suggestions_json | fromjson %}
+    {% if suggestions %}
+      <h3>Prompt 改进建议</h3>
+      <ul class="prompt-suggestions">
+        {% for field, suggestion in suggestions.items() %}
+          <li><strong>{{ field }}</strong>：{{ suggestion }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% set patterns = last_synthesis.patterns_json | fromjson %}
+    {% if patterns %}
+      <h3>归纳的规律</h3>
+      <ul class="patterns">
+        {% for p in patterns %}
+          <li>{{ p }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% else %}
+    <p>暂无 synthesis 记录。</p>
+  {% endif %}
+
+  <form method="post" action="/admin/synthesize">
+    <button type="submit" class="btn-send">立即运行 Synthesis</button>
+  </form>
+  <p class="hint">自动触发：自上次 synthesis 后累计 ≥ 3 条正式有效回复。</p>
 
   <h2>内容问题（待复查）</h2>
   {% if content_flags %}

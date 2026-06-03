@@ -35,6 +35,11 @@ from send_outreach import (
     _send_message,
     load_send_config,
 )
+from webui.lead_priority import (
+    DEFAULT_PRIORITY,
+    compute_final_score,
+    load_ranking_inputs,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNS_DIR = REPO_ROOT / "runs"
@@ -47,9 +52,48 @@ def _imap_loop() -> None:
             from webui.imap_poller import poll_once
 
             poll_once(DB_PATH)
+            _check_synthesis_threshold()
         except Exception as exc:
             logging.warning("IMAP poll error: %s", exc)
         time.sleep(600)
+
+
+def _check_synthesis_threshold() -> None:
+    """Trigger synthesis if there are at least 3 new valid non-test replies."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        try:
+            last = conn.execute(
+                "SELECT run_at FROM synthesis_log ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            since = last["run_at"] if last else "1970-01-01T00:00:00"
+            count = conn.execute(
+                r"""
+                SELECT COUNT(*)
+                FROM received_replies
+                WHERE llm_verdict = 'valid'
+                  AND judged_at > ?
+                  AND run_id NOT LIKE 'test\_%' ESCAPE '\'
+                """,
+                (since,),
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        if count >= 3:
+            from webui.synthesizer import run_synthesis
+
+            threading.Thread(
+                target=run_synthesis,
+                kwargs={"db_path": DB_PATH, "trigger": "reply_threshold"},
+                daemon=True,
+            ).start()
+            logging.info(
+                "synthesis triggered: %d new valid replies since %s", count, since
+            )
+    except Exception as exc:
+        logging.warning("synthesis threshold check error: %s", exc)
 
 
 @asynccontextmanager
@@ -112,10 +156,22 @@ STATUS_OPTIONS = [
     "已成交",
 ]
 CUSTOMER_TYPE_OPTIONS = [
-    "分销商",
-    "品牌方",
-    "工厂客户",
+    "原料分销商",
+    "OEM制造商",
+    "品牌商",
+    "不相关",
 ]
+CUSTOMER_TYPE_AUTO_MAP = {
+    "原料分销商": "原料分销商",
+    "OEM制造商": "OEM制造商",
+    "品牌商": "品牌商",
+    "不相关": "不相关",
+}
+CUSTOMER_TYPE_MANUAL_REMAP = {
+    "分销商": "原料分销商",
+    "品牌方": "品牌商",
+    "工厂客户": "OEM制造商",
+}
 TAG_OPTIONS = [
     "邮件太硬",
     "需要再跟进",
@@ -135,7 +191,7 @@ EDIT_CLASSIFICATIONS = {"content", "tone", "unclear"}
 
 
 app = FastAPI(
-    title="Sales Feedback Demo",
+    title="Sales Feedback",
     lifespan=lifespan,
     docs_url=None,
     redoc_url=None,
@@ -147,6 +203,7 @@ app.mount(
     name="static",
 )
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+templates.env.filters["fromjson"] = json.loads
 security = HTTPBasic(auto_error=False)
 
 
@@ -235,6 +292,90 @@ def _map_feedback_status_to_manual(status_value: str) -> str | None:
     return status_value
 
 
+def _profile_auto_customer_type(profile_path: Path) -> str | None:
+    try:
+        with profile_path.open("r", encoding="utf-8") as handle:
+            profile = json.load(handle)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(profile, dict):
+        return None
+    company = profile.get("company") if isinstance(profile.get("company"), dict) else {}
+    raw_type = str(company.get("step4_customer_type") or "").strip()
+    return CUSTOMER_TYPE_AUTO_MAP.get(raw_type)
+
+
+def _auto_customer_type_for_lead(slug: str, run_id: str) -> str | None:
+    if not (_safe_path_component(run_id) and _safe_path_component(slug)):
+        return None
+    path = RUNS_DIR / run_id / "05_profiles" / "profiles" / f"{slug}.json"
+    return _profile_auto_customer_type(path)
+
+
+def _iter_profile_json_paths():
+    if not RUNS_DIR.is_dir():
+        return
+    for run_dir in sorted(RUNS_DIR.iterdir()):
+        profiles_dir = run_dir / "05_profiles" / "profiles"
+        if not profiles_dir.is_dir():
+            continue
+        for profile_path in sorted(profiles_dir.glob("*.json")):
+            yield run_dir.name, profile_path
+
+
+def _migrate_customer_type(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE customer_type
+        SET type = CASE type
+            WHEN '分销商' THEN '原料分销商'
+            WHEN '品牌方' THEN '品牌商'
+            WHEN '工厂客户' THEN 'OEM制造商'
+            ELSE type
+        END
+        """
+    )
+    for run_id, profile_path in _iter_profile_json_paths() or ():
+        auto_type = _profile_auto_customer_type(profile_path)
+        if not auto_type:
+            continue
+        cursor = conn.execute(
+            """
+            UPDATE customer_type
+            SET auto_type = ?
+            WHERE profile_slug = ? AND run_id = ?
+            """,
+            (auto_type, profile_path.stem, run_id),
+        )
+        if cursor.rowcount:
+            continue
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO customer_type (
+                profile_slug, run_id, auto_type, source
+            )
+            VALUES (?, ?, ?, 'auto')
+            """,
+            (profile_path.stem, run_id, auto_type),
+        )
+
+
+def _compute_lead_priority(
+    conn: sqlite3.Connection,
+    slug: str,
+    run_id: str,
+    effective_status: str | None = None,
+) -> float:
+    inputs = load_ranking_inputs(
+        conn,
+        RUNS_DIR,
+        slug,
+        run_id,
+        status_override=effective_status,
+    )
+    return compute_final_score(inputs)
+
+
 def _migrate_lead_status(conn: sqlite3.Connection) -> None:
     now = dt.datetime.now().isoformat(timespec="seconds")
     keys = {
@@ -278,11 +419,45 @@ def _migrate_lead_status(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             INSERT OR IGNORE INTO lead_status (
-                profile_slug, run_id, auto_status, manual_status, effective_status, updated_at
+                profile_slug, run_id, auto_status, manual_status,
+                effective_status, updated_at, lead_priority
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (slug, run_id, auto_status, manual_status, effective_status, updated_at),
+            (
+                slug,
+                run_id,
+                auto_status,
+                manual_status,
+                effective_status,
+                updated_at,
+                _compute_lead_priority(conn, slug, run_id, effective_status),
+            ),
+        )
+
+
+def _init_lead_priority(conn: sqlite3.Connection) -> None:
+    """Backfill ranking priority once when lead_priority is first added."""
+    rows = conn.execute(
+        "SELECT profile_slug, run_id, effective_status FROM lead_status"
+    ).fetchall()
+    for row in rows:
+        conn.execute(
+            """
+            UPDATE lead_status
+            SET lead_priority = ?
+            WHERE profile_slug = ? AND run_id = ?
+            """,
+            (
+                _compute_lead_priority(
+                    conn,
+                    row["profile_slug"],
+                    row["run_id"],
+                    row["effective_status"],
+                ),
+                row["profile_slug"],
+                row["run_id"],
+            ),
         )
 
 
@@ -362,6 +537,187 @@ def _init_db() -> None:
         _ensure_column(conn, "send_tracking", "is_test", "is_test INTEGER NOT NULL DEFAULT 0")
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS web_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_event_id INTEGER UNIQUE,
+                ts INTEGER NOT NULL,
+                received_at TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                visitor_id TEXT,
+                buyer_id INTEGER,
+                token TEXT,
+                campaign_id TEXT,
+                profile_slug TEXT,
+                run_id TEXT,
+                event_type TEXT NOT NULL,
+                url TEXT,
+                page_path TEXT,
+                page_title TEXT,
+                referrer TEXT,
+                payload_json TEXT,
+                ip_prefix TEXT,
+                ip_hash TEXT,
+                country TEXT,
+                colo TEXT,
+                user_agent TEXT,
+                is_bot INTEGER NOT NULL DEFAULT 0,
+                bot_reason TEXT,
+                raw_json TEXT NOT NULL
+            )
+            """
+        )
+        _ensure_column(conn, "web_events", "profile_slug", "profile_slug TEXT")
+        _ensure_column(conn, "web_events", "run_id", "run_id TEXT")
+        _ensure_column(
+            conn,
+            "web_events",
+            "is_demo",
+            "is_demo INTEGER NOT NULL DEFAULT 0",
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_events_buyer_ts "
+            "ON web_events(buyer_id, ts DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_events_session_ts "
+            "ON web_events(session_id, ts DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_events_type_ts "
+            "ON web_events(event_type, ts DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_events_token_ts "
+            "ON web_events(token, ts DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_events_profile_ts "
+            "ON web_events(profile_slug, run_id, ts DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS tracking_ai_summary (
+                group_key TEXT PRIMARY KEY,
+                campaign_id TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                model TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                token_input INTEGER,
+                token_output INTEGER
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS match_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_token TEXT NOT NULL UNIQUE,
+                buyer_id INTEGER,
+                profile_slug TEXT,
+                run_id TEXT,
+                campaign_id TEXT,
+                email_token TEXT,
+                session_id TEXT,
+                visitor_id TEXT,
+                company_name TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'started',
+                result_url TEXT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                last_activity_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_match_sessions_buyer "
+            "ON match_sessions(buyer_id, last_activity_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_match_sessions_profile "
+            "ON match_sessions(profile_slug, run_id, last_activity_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_match_sessions_visitor "
+            "ON match_sessions(visitor_id, last_activity_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS match_answers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id INTEGER NOT NULL,
+                question_key TEXT NOT NULL,
+                answer_json TEXT NOT NULL,
+                answered_at TEXT NOT NULL,
+                UNIQUE(match_id, question_key),
+                FOREIGN KEY (match_id) REFERENCES match_sessions(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_match_answers_match "
+            "ON match_answers(match_id, question_key)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS match_results (
+                match_id INTEGER PRIMARY KEY,
+                application_scenario TEXT NOT NULL,
+                recommended_skus_json TEXT NOT NULL,
+                reference_application_id TEXT,
+                result_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (match_id) REFERENCES match_sessions(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS brief_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                public_token TEXT NOT NULL UNIQUE,
+                match_id INTEGER,
+                buyer_id INTEGER,
+                profile_slug TEXT,
+                run_id TEXT,
+                campaign_id TEXT,
+                company_name TEXT NOT NULL DEFAULT '',
+                challenge_text TEXT NOT NULL DEFAULT '',
+                timeline TEXT NOT NULL DEFAULT '',
+                deliverables_json TEXT NOT NULL DEFAULT '[]',
+                contact_email TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (match_id) REFERENCES match_sessions(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brief_submissions_match "
+            "ON brief_submissions(match_id, created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brief_submissions_profile "
+            "ON brief_submissions(profile_slug, run_id, created_at DESC)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS brief_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                brief_id INTEGER,
+                match_id INTEGER,
+                note_text TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (brief_id) REFERENCES brief_submissions(id),
+                FOREIGN KEY (match_id) REFERENCES match_sessions(id)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_brief_notes_match "
+            "ON brief_notes(match_id, created_at DESC)"
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS received_replies (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 imap_uid TEXT NOT NULL,
@@ -404,6 +760,19 @@ def _init_db() -> None:
             )
             """
         )
+        priority_was_missing = "lead_priority" not in _table_columns(conn, "lead_status")
+        _ensure_column(
+            conn,
+            "lead_status",
+            "lead_priority",
+            "lead_priority REAL NOT NULL DEFAULT 0.5",
+        )
+        _ensure_column(
+            conn,
+            "lead_status",
+            "feedback_score",
+            "feedback_score REAL",
+        )
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS status_change_log (
@@ -424,6 +793,7 @@ def _init_db() -> None:
             CREATE TABLE IF NOT EXISTS customer_type (
                 profile_slug TEXT NOT NULL,
                 run_id TEXT NOT NULL,
+                auto_type TEXT,
                 type TEXT,
                 source TEXT NOT NULL DEFAULT 'manual',
                 assigned_by TEXT,
@@ -432,6 +802,7 @@ def _init_db() -> None:
             )
             """
         )
+        _ensure_column(conn, "customer_type", "auto_type", "auto_type TEXT")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS customer_type_change_log (
@@ -518,8 +889,32 @@ def _init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_tone_examples_user "
             "ON tone_examples(username, field)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS synthesis_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                triggered_by TEXT NOT NULL,
+                feedback_count INTEGER NOT NULL DEFAULT 0,
+                valid_reply_count INTEGER NOT NULL DEFAULT 0,
+                content_flag_count INTEGER NOT NULL DEFAULT 0,
+                priority_updates_json TEXT NOT NULL DEFAULT '[]',
+                prompt_suggestions_json TEXT NOT NULL DEFAULT '{}',
+                patterns_json TEXT NOT NULL DEFAULT '[]',
+                summary TEXT NOT NULL DEFAULT '',
+                llm_raw TEXT NOT NULL DEFAULT '',
+                run_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_synthesis_run_at "
+            "ON synthesis_log(run_at DESC)"
+        )
         _seed_initial_users(conn)
         _migrate_lead_status(conn)
+        _migrate_customer_type(conn)
+        if priority_was_missing:
+            _init_lead_priority(conn)
         _backfill_reply_company_names(conn)
 
 
@@ -559,6 +954,759 @@ def require_admin(current_user: str = Depends(require_auth)) -> str:
     if row is None or not row["is_admin"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     return current_user
+
+
+def _tracking_ingest_secret() -> str:
+    return (
+        os.environ.get("WEB_TRACKING_INGEST_SECRET")
+        or os.environ.get("ECS_API_SECRET")
+        or ""
+    ).strip()
+
+
+def _require_tracking_ingest(request: Request) -> None:
+    secret = _tracking_ingest_secret()
+    if not secret:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Tracking ingest secret not configured")
+    provided = (
+        request.headers.get("X-API-Key")
+        or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    )
+    if not secrets.compare_digest(provided or "", secret):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid tracking ingest secret")
+
+
+def _event_value(event: dict, key: str, default: object = None) -> object:
+    value = event.get(key)
+    return default if value is None else value
+
+
+def _coerce_event_int(value: object) -> int | None:
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _store_web_events(events: list[dict]) -> int:
+    received_at = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+    inserted = 0
+    with _db() as conn:
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            source_event_id = _coerce_event_int(event.get("id"))
+            ts = _coerce_event_int(event.get("ts")) or int(time.time())
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO web_events (
+                    source_event_id, ts, received_at, session_id, visitor_id, buyer_id,
+                    token, campaign_id, profile_slug, run_id, event_type, url, page_path, page_title, referrer,
+                    payload_json, ip_prefix, ip_hash, country, colo, user_agent, is_bot,
+                    bot_reason, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    source_event_id,
+                    ts,
+                    received_at,
+                    str(_event_value(event, "session_id", ""))[:160],
+                    str(_event_value(event, "visitor_id", "") or "")[:160],
+                    _coerce_event_int(event.get("buyer_id")),
+                    str(_event_value(event, "token", "") or "")[:160],
+                    str(_event_value(event, "campaign_id", "") or "")[:160],
+                    str(_event_value(event, "profile_slug", "") or "")[:160],
+                    str(_event_value(event, "run_id", "") or "")[:160],
+                    str(_event_value(event, "event_type", "") or "")[:80],
+                    str(_event_value(event, "url", "") or "")[:1200],
+                    str(_event_value(event, "page_path", "") or "")[:600],
+                    str(_event_value(event, "page_title", "") or "")[:300],
+                    str(_event_value(event, "referrer", "") or "")[:1200],
+                    str(_event_value(event, "payload_json", "") or "")[:12000],
+                    str(_event_value(event, "ip_prefix", "") or "")[:80],
+                    str(_event_value(event, "ip_hash", "") or "")[:128],
+                    str(_event_value(event, "country", "") or "")[:16],
+                    str(_event_value(event, "colo", "") or "")[:16],
+                    str(_event_value(event, "user_agent", "") or "")[:700],
+                    1 if _coerce_event_int(event.get("is_bot")) else 0,
+                    str(_event_value(event, "bot_reason", "") or "")[:120],
+                    json.dumps(event, ensure_ascii=False),
+                ),
+            )
+            inserted += cursor.rowcount
+        conn.commit()
+    return inserted
+
+
+@app.post("/api/ingest_events")
+async def ingest_events(request: Request) -> dict:
+    _require_tracking_ingest(request)
+    payload = await request.json()
+    events = payload.get("events") if isinstance(payload, dict) else payload
+    if not isinstance(events, list):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="events must be a list")
+    if len(events) > 1000:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="max 1000 events per request")
+    inserted = _store_web_events(events)
+    return {"ok": True, "received": len(events), "inserted": inserted}
+
+
+@app.get("/api/web_events_summary")
+def web_events_summary(_: str = Depends(require_admin)) -> dict:
+    with _db() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM web_events").fetchone()[0]
+        human = conn.execute("SELECT COUNT(*) FROM web_events WHERE is_bot = 0").fetchone()[0]
+        latest = conn.execute(
+            """
+            SELECT ts, buyer_id, campaign_id, profile_slug, run_id, event_type, page_path, country, is_bot
+            FROM web_events
+            ORDER BY id DESC
+            LIMIT 50
+            """
+        ).fetchall()
+        by_type = conn.execute(
+            """
+            SELECT event_type, COUNT(*) AS count
+            FROM web_events
+            WHERE is_bot = 0
+            GROUP BY event_type
+            ORDER BY count DESC, event_type
+            LIMIT 20
+            """
+        ).fetchall()
+    return {
+        "ok": True,
+        "total": total,
+        "human": human,
+        "by_type": [dict(row) for row in by_type],
+        "latest": [dict(row) for row in latest],
+    }
+
+
+MATCH_QUESTION_LABELS = {
+    "q1": "Product category",
+    "q2": "Preferred formats",
+    "q3": "Annual volume",
+    "q4": "Application scenario",
+}
+MATCH_VALUE_LABELS = {
+    "beverage": "Beverage",
+    "bar": "Bar & snack",
+    "supplement": "Supplement",
+    "bakery": "Bakery",
+    "confectionery": "Confectionery",
+    "other": "Something else",
+    "whole": "Whole dried berry",
+    "powder": "Freeze-dried or fruit powder",
+    "puree": "Puree",
+    "juice": "Juice or concentrate",
+    "extract": "Leaf, extract, or oil",
+    "open": "Open to suggestions",
+    "lt500": "Less than 500 kg",
+    "500_5t": "500 kg - 5 tonnes",
+    "5_20t": "5 - 20 tonnes",
+    "gt20": "More than 20 tonnes",
+    "rtd_beverage": "RTD beverage",
+    "bar_formulation": "Bar formulation",
+    "hot_beverage_mix": "Hot beverage & tea blend",
+    "capsule_fill": "Capsule fill",
+    "powder_blend": "Functional powder blend",
+    "topping_decoration": "Topping & decoration",
+    "exploring": "Still exploring",
+    "now": "Sourcing now",
+    "6mo": "Within 6 months",
+    "next_year": "Exploring for next year",
+    "research": "Just researching",
+    "spec": "Spec sheets",
+    "coa": "Current CoAs",
+    "sample": "Sample request",
+    "pricing": "Pricing tier",
+}
+MATCH_EVENT_TYPES = {
+    "match_started",
+    "match_step_answered",
+    "match_abandoned",
+    "match_completed",
+    "recommendation_viewed",
+    "brief_submitted",
+    "brief_note_added",
+}
+MATCH_FORMAT_FILTERS = {
+    "whole": {"whole-dried-berry"},
+    "powder": {"functional-extract", "leaf-powder"},
+    "puree": {"puree"},
+    "juice": {"puree"},
+    "extract": {"leaf", "leaf-powder", "functional-extract", "oil"},
+}
+
+
+def _now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _new_public_token(prefix: str) -> str:
+    return prefix + "_" + secrets.token_urlsafe(12).replace("-", "").replace("_", "")[:16]
+
+
+def _json_dumps(value: object) -> str:
+    return json.dumps(value if value is not None else {}, ensure_ascii=False)
+
+
+def _json_loads(value: object, fallback: object = None) -> object:
+    if fallback is None:
+        fallback = {}
+    try:
+        return json.loads(str(value or ""))
+    except (TypeError, json.JSONDecodeError):
+        return fallback
+
+
+def _answer_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if value is None or value == "":
+        return []
+    return [str(value).strip()]
+
+
+def _answer_label(value: object) -> str:
+    values = _answer_list(value)
+    return ", ".join(MATCH_VALUE_LABELS.get(item, item) for item in values)
+
+
+def _safe_public_text(value: object, max_len: int = 2000) -> str:
+    return str(value or "").strip()[:max_len]
+
+
+def _public_attribution(request: Request, body: dict) -> dict:
+    cookies = request.cookies
+    buyer_id = _coerce_event_int(body.get("buyer_id") or cookies.get("_rv_bid"))
+    profile_slug = _safe_public_text(body.get("profile_slug") or "", 160)
+    run_id = _safe_public_text(body.get("run_id") or "", 160)
+    company_name = _safe_public_text(body.get("company_name") or "", 256)
+    if not company_name and profile_slug and run_id:
+        company_name = _profile_company_name(run_id, profile_slug)
+    return {
+        "buyer_id": buyer_id,
+        "profile_slug": profile_slug,
+        "run_id": run_id,
+        "campaign_id": _safe_public_text(body.get("campaign_id") or cookies.get("_rv_campaign") or "", 160),
+        "email_token": _safe_public_text(body.get("token") or body.get("email_token") or cookies.get("_rv_token") or "", 160),
+        "session_id": _safe_public_text(body.get("session_id") or cookies.get("_rv_sess") or "", 160),
+        "visitor_id": _safe_public_text(body.get("visitor_id") or body.get("client_id") or "", 160),
+        "company_name": company_name,
+    }
+
+
+def _insert_public_event(
+    conn: sqlite3.Connection,
+    request: Request,
+    *,
+    event_type: str,
+    attribution: dict,
+    payload: dict,
+    url: str = "",
+    page_path: str = "",
+    page_title: str = "",
+) -> None:
+    now_ts = int(time.time())
+    received_at = _now_iso()
+    raw = {
+        "source": "redvia-match-api",
+        "event_type": event_type,
+        "payload": payload,
+    }
+    conn.execute(
+        """
+        INSERT INTO web_events (
+            source_event_id, ts, received_at, session_id, visitor_id, buyer_id,
+            token, campaign_id, profile_slug, run_id, event_type, url, page_path,
+            page_title, referrer, payload_json, ip_prefix, ip_hash, country, colo,
+            user_agent, is_bot, bot_reason, raw_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            None,
+            now_ts,
+            received_at,
+            attribution.get("session_id") or attribution.get("visitor_id") or attribution.get("email_token") or "anonymous",
+            attribution.get("visitor_id") or "",
+            attribution.get("buyer_id"),
+            attribution.get("email_token") or "",
+            attribution.get("campaign_id") or "",
+            attribution.get("profile_slug") or "",
+            attribution.get("run_id") or "",
+            event_type,
+            _safe_public_text(url or str(request.url), 1200),
+            _safe_public_text(page_path or "", 600),
+            _safe_public_text(page_title or "", 300),
+            _safe_public_text(request.headers.get("Referer") or "", 1200),
+            _json_dumps(payload)[:12000],
+            "",
+            "",
+            _safe_public_text(request.headers.get("CF-IPCountry") or "", 16),
+            "",
+            _safe_public_text(request.headers.get("User-Agent") or "", 700),
+            0,
+            "",
+            _json_dumps(raw),
+        ),
+    )
+
+
+def _match_by_token(conn: sqlite3.Connection, token: str) -> sqlite3.Row | None:
+    token = _safe_public_text(token, 80)
+    if not token:
+        return None
+    return conn.execute(
+        "SELECT * FROM match_sessions WHERE public_token = ?",
+        (token,),
+    ).fetchone()
+
+
+def _brief_by_token(conn: sqlite3.Connection, token: str) -> sqlite3.Row | None:
+    token = _safe_public_text(token, 80)
+    if not token:
+        return None
+    return conn.execute(
+        "SELECT * FROM brief_submissions WHERE public_token = ?",
+        (token,),
+    ).fetchone()
+
+
+def _match_answers(conn: sqlite3.Connection, match_id: int) -> dict[str, object]:
+    rows = conn.execute(
+        "SELECT question_key, answer_json FROM match_answers WHERE match_id = ?",
+        (match_id,),
+    ).fetchall()
+    return {
+        row["question_key"]: _json_loads(row["answer_json"], [])
+        for row in rows
+    }
+
+
+def _load_match_matrix() -> dict:
+    return _read_json(REPO_ROOT / "web_claude" / "data" / "sku_application_matrix.json")
+
+
+def _load_reference_applications() -> dict[str, dict]:
+    payload = _read_json(REPO_ROOT / "web_claude" / "data" / "reference_applications.json")
+    apps = payload.get("applications") if isinstance(payload, dict) else []
+    return {
+        str(app.get("application_scenario_id")): app
+        for app in apps
+        if isinstance(app, dict) and app.get("application_scenario_id")
+    }
+
+
+def _scenario_from_answers(answers: dict[str, object]) -> str:
+    q4 = _answer_list(answers.get("q4"))
+    if q4 and q4[0] != "exploring":
+        return q4[0]
+    q1 = (_answer_list(answers.get("q1")) or [""])[0]
+    return {
+        "beverage": "rtd_beverage",
+        "bar": "bar_formulation",
+        "supplement": "capsule_fill",
+        "bakery": "topping_decoration",
+        "confectionery": "topping_decoration",
+    }.get(q1, "rtd_beverage")
+
+
+def _selected_format_set(answers: dict[str, object]) -> set[str]:
+    selected = _answer_list(answers.get("q2"))
+    if not selected or "open" in selected:
+        return set()
+    formats: set[str] = set()
+    for item in selected:
+        formats.update(MATCH_FORMAT_FILTERS.get(item, set()))
+    return formats
+
+
+def _compute_match_result(answers: dict[str, object]) -> dict:
+    matrix = _load_match_matrix()
+    skus = matrix.get("skus") if isinstance(matrix, dict) else []
+    priority = matrix.get("priority") if isinstance(matrix, dict) else {}
+    scenario = _scenario_from_answers(answers)
+    scenario_priority = priority.get(scenario) if isinstance(priority, dict) else {}
+    format_filter = _selected_format_set(answers)
+    references = _load_reference_applications()
+    reference = references.get(scenario, {})
+    reference_order = {
+        str(sku_id): idx
+        for idx, sku_id in enumerate(reference.get("recommended_sku_ids") or [])
+    }
+
+    scored = []
+    for index, sku in enumerate(skus if isinstance(skus, list) else []):
+        if not isinstance(sku, dict):
+            continue
+        sku_id = str(sku.get("id") or "")
+        score = int(scenario_priority.get(sku_id, 0)) if isinstance(scenario_priority, dict) else 0
+        if score <= 0:
+            continue
+        format_bonus = 1 if not format_filter or str(sku.get("format") or "") in format_filter else 0
+        ref_rank = reference_order.get(sku_id, 999 + index)
+        scored.append((format_bonus, score, ref_rank, index, sku_id, sku))
+    scored.sort(key=lambda item: (-item[0], -item[1], item[2], item[3]))
+    chosen = [item[5] for item in scored[:3]]
+    if len(chosen) < 3:
+        chosen_ids = {str(item.get("id") or "") for item in chosen}
+        fallback = [
+            sku for _, _, _, _, _, sku in sorted(scored, key=lambda item: (-item[1], item[2], item[3]))
+            if str(sku.get("id") or "") not in chosen_ids
+        ]
+        chosen.extend(fallback[: 3 - len(chosen)])
+
+    return {
+        "application_scenario": scenario,
+        "application_label": MATCH_VALUE_LABELS.get(scenario, scenario),
+        "recommended_skus": [
+            {
+                "id": sku.get("id"),
+                "name": sku.get("name"),
+                "format": sku.get("format"),
+                "image": sku.get("image"),
+            }
+            for sku in chosen
+        ],
+        "reference_application_id": scenario,
+        "reference_title": reference.get("title") or MATCH_VALUE_LABELS.get(scenario, scenario),
+    }
+
+
+@app.post("/api/match/start")
+async def match_start(request: Request) -> dict:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSON object required")
+    existing_token = _safe_public_text(body.get("public_token") or body.get("match_public_token") or "", 80)
+    with _db() as conn:
+        if existing_token:
+            existing = _match_by_token(conn, existing_token)
+            if existing:
+                return {"ok": True, "match_id": existing["id"], "public_token": existing["public_token"]}
+        attribution = _public_attribution(request, body)
+        now = _now_iso()
+        public_token = _new_public_token("m")
+        cursor = conn.execute(
+            """
+            INSERT INTO match_sessions (
+                public_token, buyer_id, profile_slug, run_id, campaign_id, email_token,
+                session_id, visitor_id, company_name, status, started_at, last_activity_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'started', ?, ?, ?)
+            """,
+            (
+                public_token,
+                attribution["buyer_id"],
+                attribution["profile_slug"],
+                attribution["run_id"],
+                attribution["campaign_id"],
+                attribution["email_token"],
+                attribution["session_id"],
+                attribution["visitor_id"],
+                attribution["company_name"],
+                now,
+                now,
+                now,
+            ),
+        )
+        match_id = int(cursor.lastrowid)
+        _insert_public_event(
+            conn,
+            request,
+            event_type="match_started",
+            attribution=attribution,
+            payload={"match_id": match_id, "match_token": public_token},
+            url=_safe_public_text(body.get("url") or "", 1200),
+            page_path=_safe_public_text(body.get("page_path") or "", 600),
+            page_title=_safe_public_text(body.get("page_title") or "", 300),
+        )
+    return {"ok": True, "match_id": match_id, "public_token": public_token}
+
+
+@app.post("/api/match/answer")
+async def match_answer(request: Request) -> dict:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSON object required")
+    public_token = _safe_public_text(body.get("public_token") or body.get("match_public_token") or "", 80)
+    question_key = _safe_public_text(body.get("question_key") or "", 24)
+    if question_key not in MATCH_QUESTION_LABELS:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid question_key")
+    answer = body.get("answer")
+    now = _now_iso()
+    with _db() as conn:
+        match = _match_by_token(conn, public_token)
+        if not match:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found")
+        conn.execute(
+            """
+            INSERT INTO match_answers (match_id, question_key, answer_json, answered_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(match_id, question_key) DO UPDATE SET
+              answer_json = excluded.answer_json,
+              answered_at = excluded.answered_at
+            """,
+            (match["id"], question_key, _json_dumps(answer), now),
+        )
+        conn.execute(
+            """
+            UPDATE match_sessions
+            SET status = CASE WHEN status = 'started' THEN 'in_progress' ELSE status END,
+                last_activity_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, match["id"]),
+        )
+        attribution = {
+            "buyer_id": match["buyer_id"],
+            "profile_slug": match["profile_slug"],
+            "run_id": match["run_id"],
+            "campaign_id": match["campaign_id"],
+            "email_token": match["email_token"],
+            "session_id": match["session_id"],
+            "visitor_id": match["visitor_id"],
+        }
+        _insert_public_event(
+            conn,
+            request,
+            event_type="match_step_answered",
+            attribution=attribution,
+            payload={
+                "match_id": match["id"],
+                "match_token": public_token,
+                "question_key": question_key,
+                "question_label": MATCH_QUESTION_LABELS[question_key],
+                "answer": answer,
+                "answer_label": _answer_label(answer),
+            },
+            url=_safe_public_text(body.get("url") or "", 1200),
+            page_path=_safe_public_text(body.get("page_path") or "", 600),
+            page_title=_safe_public_text(body.get("page_title") or "", 300),
+        )
+    return {"ok": True}
+
+
+@app.post("/api/match/complete")
+async def match_complete(request: Request) -> dict:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSON object required")
+    public_token = _safe_public_text(body.get("public_token") or body.get("match_public_token") or "", 80)
+    incoming_answers = body.get("answers") if isinstance(body.get("answers"), dict) else {}
+    now = _now_iso()
+    with _db() as conn:
+        match = _match_by_token(conn, public_token)
+        if not match:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found")
+        for question_key, answer in incoming_answers.items():
+            question_key = _safe_public_text(question_key, 24)
+            if question_key not in MATCH_QUESTION_LABELS:
+                continue
+            conn.execute(
+                """
+                INSERT INTO match_answers (match_id, question_key, answer_json, answered_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(match_id, question_key) DO UPDATE SET
+                  answer_json = excluded.answer_json,
+                  answered_at = excluded.answered_at
+                """,
+                (match["id"], question_key, _json_dumps(answer), now),
+            )
+        answers = _match_answers(conn, int(match["id"]))
+        result = _compute_match_result(answers)
+        result_url = _safe_public_text(body.get("result_url") or "", 500) or f"recommendation.html?m={public_token}"
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO match_results (
+                match_id, application_scenario, recommended_skus_json,
+                reference_application_id, result_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                match["id"],
+                result["application_scenario"],
+                _json_dumps(result["recommended_skus"]),
+                result["reference_application_id"],
+                _json_dumps(result),
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE match_sessions
+            SET status = 'completed', completed_at = COALESCE(completed_at, ?),
+                result_url = ?, last_activity_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, result_url, now, now, match["id"]),
+        )
+        attribution = {
+            "buyer_id": match["buyer_id"],
+            "profile_slug": match["profile_slug"],
+            "run_id": match["run_id"],
+            "campaign_id": match["campaign_id"],
+            "email_token": match["email_token"],
+            "session_id": match["session_id"],
+            "visitor_id": match["visitor_id"],
+        }
+        _insert_public_event(
+            conn,
+            request,
+            event_type="match_completed",
+            attribution=attribution,
+            payload={
+                "match_id": match["id"],
+                "match_token": public_token,
+                "answers": answers,
+                "application_scenario": result["application_scenario"],
+                "application_label": result["application_label"],
+                "recommended_skus": result["recommended_skus"],
+                "reference_title": result["reference_title"],
+            },
+            url=_safe_public_text(body.get("url") or "", 1200),
+            page_path=_safe_public_text(body.get("page_path") or "", 600),
+            page_title=_safe_public_text(body.get("page_title") or "", 300),
+        )
+    return {"ok": True, "public_token": public_token, "result": result, "redirect_url": result_url}
+
+
+@app.post("/api/brief")
+async def brief_submit(request: Request) -> dict:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSON object required")
+    public_token = _safe_public_text(body.get("match_public_token") or body.get("public_token") or "", 80)
+    now = _now_iso()
+    with _db() as conn:
+        match = _match_by_token(conn, public_token)
+        if not match:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Match not found")
+        brief_token = _new_public_token("b")
+        deliverables = body.get("deliverables") if isinstance(body.get("deliverables"), list) else []
+        cursor = conn.execute(
+            """
+            INSERT INTO brief_submissions (
+                public_token, match_id, buyer_id, profile_slug, run_id, campaign_id,
+                company_name, challenge_text, timeline, deliverables_json,
+                contact_email, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                brief_token,
+                match["id"],
+                match["buyer_id"],
+                match["profile_slug"],
+                match["run_id"],
+                match["campaign_id"],
+                match["company_name"],
+                _safe_public_text(body.get("challenge_text"), 5000),
+                _safe_public_text(body.get("timeline"), 200),
+                _json_dumps(deliverables),
+                _safe_public_text(body.get("contact_email"), 256),
+                now,
+            ),
+        )
+        brief_id = int(cursor.lastrowid)
+        conn.execute(
+            """
+            UPDATE match_sessions
+            SET status = 'brief_submitted', last_activity_at = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (now, now, match["id"]),
+        )
+        attribution = {
+            "buyer_id": match["buyer_id"],
+            "profile_slug": match["profile_slug"],
+            "run_id": match["run_id"],
+            "campaign_id": match["campaign_id"],
+            "email_token": match["email_token"],
+            "session_id": match["session_id"],
+            "visitor_id": match["visitor_id"],
+        }
+        _insert_public_event(
+            conn,
+            request,
+            event_type="brief_submitted",
+            attribution=attribution,
+            payload={
+                "match_id": match["id"],
+                "brief_id": brief_id,
+                "brief_token": brief_token,
+                "challenge_text": _safe_public_text(body.get("challenge_text"), 5000),
+                "timeline": _safe_public_text(body.get("timeline"), 200),
+                "timeline_label": MATCH_VALUE_LABELS.get(_safe_public_text(body.get("timeline"), 80), _safe_public_text(body.get("timeline"), 80)),
+                "deliverables": deliverables,
+                "deliverables_label": [_answer_label(item) for item in deliverables],
+                "has_contact_email": bool(_safe_public_text(body.get("contact_email"), 256)),
+            },
+            url=_safe_public_text(body.get("url") or "", 1200),
+            page_path=_safe_public_text(body.get("page_path") or "", 600),
+            page_title=_safe_public_text(body.get("page_title") or "", 300),
+        )
+    redirect_url = _safe_public_text(body.get("redirect_url") or "", 500) or f"brief.html?b={brief_token}&m={public_token}"
+    return {"ok": True, "brief_id": brief_id, "brief_public_token": brief_token, "redirect_url": redirect_url}
+
+
+@app.post("/api/brief/note")
+async def brief_note(request: Request) -> dict:
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JSON object required")
+    note_text = _safe_public_text(body.get("note_text"), 2000)
+    if not note_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="note_text is required")
+    brief_token = _safe_public_text(body.get("brief_public_token") or body.get("public_token") or "", 80)
+    match_token = _safe_public_text(body.get("match_public_token") or "", 80)
+    now = _now_iso()
+    with _db() as conn:
+        brief = _brief_by_token(conn, brief_token)
+        match = _match_by_token(conn, match_token) if match_token else None
+        if brief and not match and brief["match_id"]:
+            match = conn.execute("SELECT * FROM match_sessions WHERE id = ?", (brief["match_id"],)).fetchone()
+        if not brief and not match:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Brief or match not found")
+        cursor = conn.execute(
+            """
+            INSERT INTO brief_notes (brief_id, match_id, note_text, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                brief["id"] if brief else None,
+                match["id"] if match else None,
+                note_text,
+                now,
+            ),
+        )
+        if match:
+            attribution = {
+                "buyer_id": match["buyer_id"],
+                "profile_slug": match["profile_slug"],
+                "run_id": match["run_id"],
+                "campaign_id": match["campaign_id"],
+                "email_token": match["email_token"],
+                "session_id": match["session_id"],
+                "visitor_id": match["visitor_id"],
+            }
+            _insert_public_event(
+                conn,
+                request,
+                event_type="brief_note_added",
+                attribution=attribution,
+                payload={
+                    "match_id": match["id"],
+                    "brief_id": brief["id"] if brief else None,
+                    "note_text": note_text,
+                },
+                url=_safe_public_text(body.get("url") or "", 1200),
+                page_path=_safe_public_text(body.get("page_path") or "", 600),
+                page_title=_safe_public_text(body.get("page_title") or "", 300),
+            )
+    return {"ok": True, "note_id": int(cursor.lastrowid)}
 
 
 def _user_display_name(username: str) -> str:
@@ -750,9 +1898,91 @@ def _truncate(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _sender_text(text: object, sender_name: str) -> str:
+_SENDER_BASE_URL = "https://redvia-tracking.redvia.workers.dev"
+
+
+def _buyer_marker(slug: str, run_id: str) -> str:
+    key = f"{slug}|{run_id}".encode("utf-8")
+    return hashlib.sha1(key).hexdigest()[:8]
+
+
+def _sender_text(text: object, sender_name: str, buyer_marker: str = "") -> str:
     value = str(text or "")
-    return value.replace("Nicky", sender_name) if sender_name else value
+    # Display-layer brand normalization for legacy outreach data.
+    # Old profile_enrich runs baked in berylgoji.com / Bairuiyuan; new runs use Redvia.
+    value = value.replace("http://berylgoji.com", _SENDER_BASE_URL)
+    value = value.replace("https://berylgoji.com", _SENDER_BASE_URL)
+    value = value.replace("berylgoji.com", "redvia-tracking.redvia.workers.dev")
+    value = value.replace("Bairuiyuan Goji", "Redvia")
+    value = value.replace("Bairuiyuan", "Redvia")
+    # Per-buyer tracking marker so sales can tell which lead an email belongs to.
+    # The /t/<marker> path is the Worker's tracking redirect; bogus markers still
+    # 302 to the site root, so clicking is safe even though no D1 token exists.
+    if buyer_marker:
+        value = value.replace(_SENDER_BASE_URL, f"{_SENDER_BASE_URL}/t/{buyer_marker}")
+    if not sender_name:
+        return value
+    value = value.replace("Nicky", sender_name)
+    value = value.replace("[Your Name]", sender_name)
+    value = value.replace("[Your Title]", "Sales Manager")
+    value = value.replace("[Your Company]", "Redvia")
+    return value
+
+
+def _compute_auto_status_from_conn(conn: sqlite3.Connection, slug: str, run_id: str) -> str:
+    valid_reply = conn.execute(
+        """
+        SELECT 1 FROM received_replies
+        WHERE profile_slug = ? AND run_id = ? AND llm_verdict = 'valid'
+        LIMIT 1
+        """,
+        (slug, run_id),
+    ).fetchone()
+    if valid_reply:
+        return "已收到有效回复"
+
+    sent = conn.execute(
+        """
+        SELECT 1 FROM send_tracking
+        WHERE profile_slug = ? AND run_id = ? AND send_status = 'sent'
+        LIMIT 1
+        """,
+        (slug, run_id),
+    ).fetchone()
+    return "已发" if sent else "未发"
+
+
+def _refresh_priority_for_lead(conn: sqlite3.Connection, slug: str, run_id: str) -> float:
+    row = conn.execute(
+        "SELECT * FROM lead_status WHERE profile_slug = ? AND run_id = ?",
+        (slug, run_id),
+    ).fetchone()
+    now = dt.datetime.now().isoformat(timespec="seconds")
+    if row:
+        effective_status = row["effective_status"]
+    else:
+        auto_status = _compute_auto_status_from_conn(conn, slug, run_id)
+        effective_status = auto_status
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO lead_status (
+                profile_slug, run_id, auto_status, manual_status,
+                effective_status, updated_at, lead_priority
+            )
+            VALUES (?, ?, ?, NULL, ?, ?, ?)
+            """,
+            (slug, run_id, auto_status, effective_status, now, DEFAULT_PRIORITY),
+        )
+    lead_priority = _compute_lead_priority(conn, slug, run_id, effective_status)
+    conn.execute(
+        """
+        UPDATE lead_status
+        SET lead_priority = ?
+        WHERE profile_slug = ? AND run_id = ?
+        """,
+        (lead_priority, slug, run_id),
+    )
+    return lead_priority
 
 
 def load_sales_leads(run_id: str, sender_name: str = "") -> list[dict]:
@@ -782,9 +2012,11 @@ def load_sales_leads(run_id: str, sender_name: str = "") -> list[dict]:
         body = profile.get("profile") or {}
         outreach = profile.get("outreach") or {}
         generated_at = profile.get("generated_at", "")
+        slug = json_path.stem
+        marker = _buyer_marker(slug, run_id)
         rows.append(
             {
-                "slug": json_path.stem,
+                "slug": slug,
                 "run_id": run_id,
                 "generated_at": generated_at[:10] if generated_at else "",
                 "display_name": company.get("display_name", ""),
@@ -797,23 +2029,35 @@ def load_sales_leads(run_id: str, sender_name: str = "") -> list[dict]:
                 "subject": _sender_text(
                     outreach.get("cold_email_subject", ""),
                     sender_name,
+                    marker,
                 ),
                 "body": _sender_text(
                     outreach.get("cold_email_body", ""),
                     sender_name,
+                    marker,
                 ),
                 "whatsapp": _sender_text(
                     outreach.get("whatsapp_or_linkedin_message", ""),
                     sender_name,
+                    marker,
                 ),
                 "follow_up": _sender_text(
                     outreach.get("follow_up_email", ""),
                     sender_name,
+                    marker,
                 ),
                 "bio": body.get("bio_cn", ""),
                 "business_relevance": body.get("business_relevance_cn", ""),
             }
         )
+    if rows:
+        with _db() as conn:
+            priority_by_slug = {
+                row["slug"]: _refresh_priority_for_lead(conn, row["slug"], run_id)
+                for row in rows
+            }
+        for row in rows:
+            row["lead_priority"] = priority_by_slug.get(row["slug"], DEFAULT_PRIORITY)
     return rows
 
 
@@ -822,6 +2066,7 @@ def load_all_leads(sender_name: str = "", runs: list[str] | None = None) -> list
     all_rows: list[dict] = []
     for run_id in (runs if runs is not None else list_available_runs()):
         all_rows.extend(load_sales_leads(run_id, sender_name=sender_name))
+    all_rows.sort(key=lambda r: r.get("lead_priority", DEFAULT_PRIORITY), reverse=True)
     return all_rows
 
 
@@ -876,25 +2121,7 @@ def load_latest_status(slug: str, run_id: str) -> str:
 
 def _compute_auto_status(slug: str, run_id: str) -> str:
     with _db() as conn:
-        reply = conn.execute(
-            """
-            SELECT 1 FROM received_replies
-            WHERE profile_slug = ? AND run_id = ? AND llm_verdict = 'valid'
-            LIMIT 1
-            """,
-            (slug, run_id),
-        ).fetchone()
-        if reply:
-            return "已收到有效回复"
-        sent = conn.execute(
-            """
-            SELECT 1 FROM send_tracking
-            WHERE profile_slug = ? AND run_id = ? AND send_status = 'sent'
-            LIMIT 1
-            """,
-            (slug, run_id),
-        ).fetchone()
-    return "已发" if sent else "未发"
+        return _compute_auto_status_from_conn(conn, slug, run_id)
 
 
 def get_lead_status(slug: str, run_id: str) -> dict:
@@ -933,25 +2160,26 @@ def _set_auto_lead_status(slug: str, run_id: str, new_status: str, reason: str =
         old_effective = row["effective_status"] if row else None
         manual_status = row["manual_status"] if row else None
         effective_status = manual_status or new_status
+        lead_priority = _compute_lead_priority(conn, slug, run_id, effective_status)
         if row:
             conn.execute(
                 """
                 UPDATE lead_status
-                SET auto_status = ?, effective_status = ?, updated_at = ?
+                SET auto_status = ?, effective_status = ?, updated_at = ?, lead_priority = ?
                 WHERE profile_slug = ? AND run_id = ?
                 """,
-                (new_status, effective_status, now, slug, run_id),
+                (new_status, effective_status, now, lead_priority, slug, run_id),
             )
         else:
             conn.execute(
                 """
                 INSERT INTO lead_status (
                     profile_slug, run_id, auto_status, manual_status,
-                    effective_status, updated_at
+                    effective_status, updated_at, lead_priority
                 )
-                VALUES (?, ?, ?, NULL, ?, ?)
+                VALUES (?, ?, ?, NULL, ?, ?, ?)
                 """,
-                (slug, run_id, new_status, effective_status, now),
+                (slug, run_id, new_status, effective_status, now, lead_priority),
             )
         if old_effective != effective_status:
             conn.execute(
@@ -983,25 +2211,26 @@ def set_lead_status(
         ).fetchone()
         auto_status = row["auto_status"] if row else _compute_auto_status(slug, run_id)
         old_effective = row["effective_status"] if row else auto_status
+        lead_priority = _compute_lead_priority(conn, slug, run_id, new_status)
         if row:
             conn.execute(
                 """
                 UPDATE lead_status
-                SET auto_status = ?, manual_status = ?, effective_status = ?, updated_at = ?
+                SET auto_status = ?, manual_status = ?, effective_status = ?, updated_at = ?, lead_priority = ?
                 WHERE profile_slug = ? AND run_id = ?
                 """,
-                (auto_status, new_status, new_status, now, slug, run_id),
+                (auto_status, new_status, new_status, now, lead_priority, slug, run_id),
             )
         else:
             conn.execute(
                 """
                 INSERT INTO lead_status (
                     profile_slug, run_id, auto_status, manual_status,
-                    effective_status, updated_at
+                    effective_status, updated_at, lead_priority
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (slug, run_id, auto_status, new_status, new_status, now),
+                (slug, run_id, auto_status, new_status, new_status, now, lead_priority),
             )
         if old_effective != new_status:
             conn.execute(
@@ -1022,7 +2251,31 @@ def get_customer_type(slug: str, run_id: str) -> dict | None:
             "SELECT * FROM customer_type WHERE profile_slug = ? AND run_id = ?",
             (slug, run_id),
         ).fetchone()
-    return dict(row) if row else None
+    if not row:
+        auto_type = _auto_customer_type_for_lead(slug, run_id)
+        if not auto_type:
+            return None
+        return {
+            "auto_type": auto_type,
+            "manual_type": None,
+            "effective_type": auto_type,
+            "is_manual_override": False,
+            "type": auto_type,
+        }
+    data = dict(row)
+    auto_type = data.get("auto_type")
+    manual_type = CUSTOMER_TYPE_MANUAL_REMAP.get(data.get("type"), data.get("type"))
+    effective_type = manual_type or auto_type
+    data.update(
+        {
+            "auto_type": auto_type,
+            "manual_type": manual_type,
+            "effective_type": effective_type,
+            "is_manual_override": bool(manual_type),
+            "type": effective_type,
+        }
+    )
+    return data
 
 
 def set_customer_type(slug: str, run_id: str, new_type: str, changed_by: str) -> None:
@@ -1032,10 +2285,11 @@ def set_customer_type(slug: str, run_id: str, new_type: str, changed_by: str) ->
     value = new_type or None
     with _db() as conn:
         row = conn.execute(
-            "SELECT type FROM customer_type WHERE profile_slug = ? AND run_id = ?",
+            "SELECT type, auto_type FROM customer_type WHERE profile_slug = ? AND run_id = ?",
             (slug, run_id),
         ).fetchone()
         old_type = row["type"] if row else None
+        auto_type = row["auto_type"] if row else _auto_customer_type_for_lead(slug, run_id)
         if row:
             conn.execute(
                 """
@@ -1045,15 +2299,23 @@ def set_customer_type(slug: str, run_id: str, new_type: str, changed_by: str) ->
                 """,
                 (value, changed_by, now, slug, run_id),
             )
-        else:
+        elif auto_type or value:
             conn.execute(
                 """
                 INSERT INTO customer_type (
-                    profile_slug, run_id, type, source, assigned_by, assigned_at
+                    profile_slug, run_id, auto_type, type, source, assigned_by, assigned_at
                 )
-                VALUES (?, ?, ?, 'manual', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (slug, run_id, value, changed_by, now),
+                (
+                    slug,
+                    run_id,
+                    auto_type,
+                    value,
+                    "manual" if value else "auto",
+                    changed_by if value else None,
+                    now if value else None,
+                ),
             )
         if old_type != value:
             conn.execute(
@@ -1065,6 +2327,7 @@ def set_customer_type(slug: str, run_id: str, new_type: str, changed_by: str) ->
                 """,
                 (slug, run_id, now, changed_by, old_type, value),
             )
+        _refresh_priority_for_lead(conn, slug, run_id)
 
 
 def get_received_replies(slug: str, run_id: str) -> list[dict]:
@@ -1220,7 +2483,7 @@ def _type_distribution() -> dict[str, int]:
     counts["未分类"] = 0
     for lead in load_all_leads():
         ctype = get_customer_type(lead["slug"], lead["run_id"])
-        value = ctype["type"] if ctype and ctype.get("type") else "未分类"
+        value = ctype["effective_type"] if ctype and ctype.get("effective_type") else "未分类"
         counts[value if value in counts else "未分类"] += 1
     return counts
 
@@ -1230,14 +2493,15 @@ def _type_pie_style(type_dist: dict[str, int]) -> str:
     if not total:
         return "background:#ecf0f1"
     colors = {
-        "分销商": "#3498db",
-        "品牌方": "#27ae60",
-        "工厂客户": "#f39c12",
+        "原料分销商": "#d0e8fb",
+        "OEM制造商": "#ede8e0",
+        "品牌商": "#eaf5ee",
+        "不相关": "#fdf0ee",
         "未分类": "#bdc3c7",
     }
     cursor = 0.0
     stops = []
-    for label in ["分销商", "品牌方", "工厂客户", "未分类"]:
+    for label in CUSTOMER_TYPE_OPTIONS + ["未分类"]:
         pct = type_dist.get(label, 0) / total * 100
         if pct <= 0:
             continue
@@ -2008,9 +3272,866 @@ def dashboard(
     )
 
 
+TRACKING_SEED_CAMPAIGN_ID = "VALIDATION_2026_05_22"
+TRACKING_LIVE_SUMMARY_SCOPE = "LIVE"
+TRACKING_DEMO_KNOWN_BUYERS = {
+    9101: {
+        "name": "Comptoirs & Compagnies",
+        "archetype": "hot_lead",
+        "archetype_label": "Brief Submitted",
+        "country_flag": "🇫🇷",
+        "country_name": "France",
+    },
+    9102: {
+        "name": "NaturaFit GmbH",
+        "archetype": "active",
+        "archetype_label": "Match Completed",
+        "country_flag": "🇩🇪",
+        "country_name": "Germany",
+    },
+    9103: {
+        "name": "Brew & Bloom Ltd",
+        "archetype": "returning",
+        "archetype_label": "Reviewing Products",
+        "country_flag": "🇬🇧",
+        "country_name": "United Kingdom",
+    },
+    9104: {
+        "name": "Ariza Ingredients BV",
+        "archetype": "browsing",
+        "archetype_label": "Match In Progress",
+        "country_flag": "🇳🇱",
+        "country_name": "Netherlands",
+    },
+}
+TRACKING_DEMO_ANON_VISITORS = {
+    "anon-vis-a1b2c3": {
+        "name": "Anonymous · Germany",
+        "archetype": "anonymous",
+        "archetype_label": "Anonymous",
+        "country_flag": "🌐",
+        "country_name": "Germany (匿名)",
+    },
+    "anon-vis-d4e5f6": {
+        "name": "Anonymous · Spain",
+        "archetype": "anonymous",
+        "archetype_label": "Anonymous",
+        "country_flag": "🌐",
+        "country_name": "Spain (匿名)",
+    },
+    "anon-vis-9z8y7x": {
+        "name": "Anonymous · USA",
+        "archetype": "anonymous",
+        "archetype_label": "Anonymous → 提交 brief",
+        "country_flag": "🌐",
+        "country_name": "United States (匿名)",
+    },
+}
+TRACKING_DEMO_PRODUCTS = {
+    "ningxia-red-goji": "Ningxia Red Goji Berry",
+    "qinghai-red-goji": "Qinghai Red Goji Berry",
+    "black-goji-berry": "Black Goji Berry",
+    "red-goji-puree": "Red Goji Puree",
+    "black-goji-puree": "Black Goji Puree",
+    "goji-leaf-tea": "Goji Leaf Tea",
+    "goji-leaf-matcha-powder": "Goji Leaf Matcha Powder",
+    "goji-polysaccharide-powder": "Goji Polysaccharide Powder",
+    "goji-seed-oil": "Goji Seed Oil",
+}
+TRACKING_DEMO_EVENT_ICONS = {
+    "page_view": "→",
+    "product_view": "▸",
+    "product_click": "↗",
+    "product_family_click": "↗",
+    "match_started": "◇",
+    "match_step_answered": "✓",
+    "match_completed": "◆",
+    "recommendation_viewed": "◎",
+    "brief_submitted": "✎",
+    "brief_note_added": "+",
+    "dwell_30s": "⏱",
+    "dwell_60s": "⏱",
+    "dwell": "⏱",
+    "cert_open": "⌬",
+    "form_submit": "✎",
+    "mailto_click": "✉",
+    "tel_click": "☏",
+    "cta_click": "⬢",
+}
+
+
+def _tracking_demo_group_key(row: sqlite3.Row) -> str:
+    buyer_id = _coerce_event_int(row["buyer_id"])
+    if buyer_id is not None:
+        return f"b{buyer_id}"
+    visitor_id = str(row["visitor_id"] or "").strip()
+    return f"v{visitor_id}" if visitor_id else ""
+
+
+def _tracking_demo_group_filter(group_key: str) -> tuple[str, int | str]:
+    if group_key.startswith("b"):
+        return "buyer_id = ?", int(group_key[1:])
+    return "buyer_id IS NULL AND visitor_id = ?", group_key[1:]
+
+
+def _relative_time(now_ts: int, then_ts: int) -> str:
+    diff = max(0, now_ts - then_ts)
+    if diff < 60:
+        return "just now"
+    if diff < 3600:
+        return f"{diff // 60} min ago"
+    if diff < 86400:
+        return f"{diff // 3600} hours ago"
+    return f"{diff // 86400} days ago"
+
+
+def _human_dwell(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, remainder = divmod(seconds, 60)
+    return f"{minutes}m {remainder}s" if remainder else f"{minutes}m"
+
+
+def _tracking_demo_payload_json(row: sqlite3.Row) -> dict:
+    raw = row["payload_json"] or "{}"
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _tracking_demo_product_title(slug: str, fallback: object = "") -> str:
+    fallback_text = str(fallback or "").strip()
+    return fallback_text or TRACKING_DEMO_PRODUCTS.get(slug, slug)
+
+
+def _tracking_demo_short_title(page_title: object, page_path: object = "") -> str:
+    title = str(page_title or "").replace("· Redvia", "").strip()
+    if title:
+        return title
+    return str(page_path or "page").strip() or "page"
+
+
+def _tracking_demo_event_label(row: sqlite3.Row, payload: dict) -> str:
+    event_type = str(row["event_type"] or "")
+    page_path = str(row["page_path"] or "")
+    page_title = row["page_title"]
+    slug = str(payload.get("slug") or "")
+
+    if event_type == "page_view":
+        if page_path == "/ingredients.html":
+            return "Browsed all products"
+        if page_path == "/index.html":
+            return "Landed on home page"
+        return "Landed on " + _tracking_demo_short_title(page_title, page_path)
+    if event_type == "product_view":
+        return "Viewed " + _tracking_demo_product_title(slug, payload.get("title"))
+    if event_type in {"product_click", "product_family_click"}:
+        label = str(payload.get("label") or "").strip()
+        label = label or _tracking_demo_product_title(slug, "")
+        return "Clicked " + (label or "product") + " →"
+    if event_type in {"dwell_30s", "dwell_60s", "dwell"}:
+        target = _tracking_demo_product_title(
+            slug,
+            _tracking_demo_short_title(page_title, page_path),
+        )
+        if event_type == "dwell_30s":
+            return "Stayed 30s on " + target
+        if event_type == "dwell_60s":
+            return "Stayed 60s on " + target
+        dwell_ms = _coerce_event_int(payload.get("dwell_ms")) or 0
+        return f"Stayed {max(1, dwell_ms // 1000)}s on {target}"
+    if event_type == "cert_open":
+        name = str(payload.get("name") or payload.get("cert") or "document").strip()
+        return "Opened " + name + " cert"
+    if event_type == "form_submit":
+        return "Submitted brief"
+    if event_type == "match_started":
+        return "Started Find Your Match"
+    if event_type == "match_step_answered":
+        question = str(payload.get("question_label") or payload.get("question_key") or "question").strip()
+        answer = str(payload.get("answer_label") or "").strip()
+        return f"Answered {question}: {answer}" if answer else f"Answered {question}"
+    if event_type == "match_completed":
+        scenario = str(payload.get("application_label") or payload.get("application_scenario") or "").strip()
+        return "Completed match" + (f": {scenario}" if scenario else "")
+    if event_type == "recommendation_viewed":
+        return "Viewed recommendation"
+    if event_type == "brief_submitted":
+        return "Submitted ingredient brief"
+    if event_type == "brief_note_added":
+        return "Added brief note"
+    if event_type == "mailto_click":
+        email = str(payload.get("email") or payload.get("label") or "").strip()
+        return "Clicked email " + email if email else "Clicked email"
+    if event_type == "tel_click":
+        phone = str(
+            payload.get("tel") or payload.get("phone") or payload.get("label") or ""
+        ).strip()
+        return "Clicked phone " + phone if phone else "Clicked phone"
+    if event_type == "cta_click":
+        label = str(payload.get("label") or "").strip()
+        return "CTA → " + (label or "clicked")
+    return event_type.replace("_", " ").title() or "Event"
+
+
+def _tracking_demo_timeline_event(row: sqlite3.Row, payload: dict) -> dict:
+    event_type = str(row["event_type"] or "")
+    page_path = str(row["page_path"] or "")
+    ts = int(row["ts"] or 0)
+    ts_human = dt.datetime.fromtimestamp(ts).strftime("%a %H:%M")
+    return {
+        "ts": ts,
+        "ts_human": ts_human,
+        "event_type": event_type,
+        "kind": event_type,
+        "icon": TRACKING_DEMO_EVENT_ICONS.get(event_type, "•"),
+        "label": _tracking_demo_event_label(row, payload),
+        "detail": "" if event_type == "form_submit" else page_path,
+        "brief_text": (
+            str(
+                payload.get("brief_text")
+                or payload.get("challenge_text")
+                or payload.get("note_text")
+                or ""
+            )
+            if event_type in {"form_submit", "brief_submitted", "brief_note_added"}
+            else ""
+        ),
+        "payload_pretty": json.dumps(payload, indent=2, ensure_ascii=False),
+    }
+
+
+def _tracking_group_match_rows(group_key: str) -> list[sqlite3.Row]:
+    if group_key.startswith("b"):
+        where_sql = "buyer_id = ?"
+        value: object = int(group_key[1:])
+    else:
+        where_sql = "buyer_id IS NULL AND visitor_id = ?"
+        value = group_key[1:]
+    with _db() as conn:
+        return conn.execute(
+            f"""
+            SELECT *
+            FROM match_sessions
+            WHERE {where_sql}
+            ORDER BY last_activity_at DESC, id DESC
+            """,
+            (value,),
+        ).fetchall()
+
+
+def _tracking_match_summary(group_key: str) -> dict:
+    match_rows = _tracking_group_match_rows(group_key)
+    if not match_rows:
+        return {"has_match": False}
+    match = match_rows[0]
+    with _db() as conn:
+        answer_rows = conn.execute(
+            """
+            SELECT question_key, answer_json, answered_at
+            FROM match_answers
+            WHERE match_id = ?
+            ORDER BY question_key
+            """,
+            (match["id"],),
+        ).fetchall()
+        result_row = conn.execute(
+            "SELECT * FROM match_results WHERE match_id = ?",
+            (match["id"],),
+        ).fetchone()
+        brief_row = conn.execute(
+            """
+            SELECT *
+            FROM brief_submissions
+            WHERE match_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (match["id"],),
+        ).fetchone()
+        note_rows = conn.execute(
+            """
+            SELECT *
+            FROM brief_notes
+            WHERE match_id = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 5
+            """,
+            (match["id"],),
+        ).fetchall()
+
+    answers = []
+    for row in answer_rows:
+        value = _json_loads(row["answer_json"], [])
+        answers.append(
+            {
+                "question_key": row["question_key"],
+                "question_label": MATCH_QUESTION_LABELS.get(row["question_key"], row["question_key"]),
+                "answer": value,
+                "answer_label": _answer_label(value),
+                "answered_at": row["answered_at"],
+            }
+        )
+
+    result = _json_loads(result_row["result_json"], {}) if result_row else {}
+    recommended_skus = result.get("recommended_skus") if isinstance(result, dict) else []
+    if not isinstance(recommended_skus, list):
+        recommended_skus = []
+    brief = None
+    if brief_row:
+        deliverables = _json_loads(brief_row["deliverables_json"], [])
+        if not isinstance(deliverables, list):
+            deliverables = []
+        brief = {
+            "id": brief_row["id"],
+            "public_token": brief_row["public_token"],
+            "challenge_text": brief_row["challenge_text"],
+            "timeline": brief_row["timeline"],
+            "timeline_label": MATCH_VALUE_LABELS.get(brief_row["timeline"], brief_row["timeline"]),
+            "deliverables": deliverables,
+            "deliverables_label": [MATCH_VALUE_LABELS.get(item, item) for item in deliverables],
+            "contact_email": brief_row["contact_email"],
+            "created_at": brief_row["created_at"],
+        }
+
+    return {
+        "has_match": True,
+        "match_id": match["id"],
+        "public_token": match["public_token"],
+        "status": match["status"],
+        "status_label": str(match["status"] or "").replace("_", " ").title(),
+        "company_name": match["company_name"],
+        "started_at": match["started_at"],
+        "completed_at": match["completed_at"],
+        "answers": answers,
+        "result": {
+            "application_label": result.get("application_label") if isinstance(result, dict) else "",
+            "reference_title": result.get("reference_title") if isinstance(result, dict) else "",
+            "recommended_skus": recommended_skus,
+        },
+        "brief": brief,
+        "notes": [dict(row) for row in note_rows],
+    }
+
+
+def _tracking_demo_meta(group_key: str, event_rows: list[sqlite3.Row]) -> dict:
+    first = event_rows[0]
+    match_summary = _tracking_match_summary(group_key)
+    if match_summary.get("company_name"):
+        return {
+            "name": match_summary["company_name"],
+            "archetype": "hot_lead" if match_summary.get("brief") else "active",
+            "archetype_label": "Brief Submitted" if match_summary.get("brief") else match_summary.get("status_label", "Match Activity"),
+            "country_flag": "",
+            "country_name": str(first["country"] or "Known buyer"),
+        }
+    if group_key.startswith("b"):
+        buyer_id = int(group_key[1:])
+        profile_name = _profile_company_name(str(first["run_id"] or ""), str(first["profile_slug"] or ""))
+        if profile_name:
+            return {
+                "name": profile_name,
+                "archetype": "active",
+                "archetype_label": "Tracked Buyer",
+                "country_flag": "",
+                "country_name": str(first["country"] or "Known buyer"),
+            }
+        return TRACKING_DEMO_KNOWN_BUYERS.get(
+            buyer_id,
+            {
+                "name": f"Buyer {buyer_id}",
+                "archetype": "unknown",
+                "archetype_label": "Unknown",
+                "country_flag": "",
+                "country_name": str(first["country"] or ""),
+            },
+        )
+    visitor_id = group_key[1:]
+    return TRACKING_DEMO_ANON_VISITORS.get(
+        visitor_id,
+        {
+            "name": "Anonymous visitor",
+            "archetype": "anonymous",
+            "archetype_label": "Anonymous",
+            "country_flag": "🌐",
+            "country_name": str(first["country"] or "Unknown") + " (匿名)",
+        },
+    )
+
+
+def _tracking_demo_group_model(
+    group_key: str,
+    event_rows: list[sqlite3.Row],
+    summary_row: sqlite3.Row | None,
+    now_ts: int,
+) -> dict:
+    meta = _tracking_demo_meta(group_key, event_rows)
+    match_summary = _tracking_match_summary(group_key)
+    is_anonymous = group_key.startswith("v")
+    buyer_id = int(group_key[1:]) if group_key.startswith("b") else None
+    visitor_id = group_key[1:] if is_anonymous else None
+    sessions = set()
+    products_viewed = []
+    seen_products = set()
+    certs_opened = []
+    seen_certs = set()
+    dwell_by_page: dict[tuple[str, str], int] = {}
+    submitted_brief = False
+    timeline = []
+
+    for row in event_rows:
+        payload = _tracking_demo_payload_json(row)
+        session_id = str(row["session_id"] or "")
+        page_path = str(row["page_path"] or "")
+        if session_id:
+            sessions.add(session_id)
+
+        event_type = str(row["event_type"] or "")
+        if event_type == "product_view":
+            slug = str(payload.get("slug") or "")
+            title = _tracking_demo_product_title(slug, payload.get("title"))
+            product_key = slug or title
+            if product_key and product_key not in seen_products:
+                products_viewed.append((slug, title))
+                seen_products.add(product_key)
+        if event_type == "cert_open":
+            cert_name = str(payload.get("name") or payload.get("cert") or "").strip()
+            if cert_name and cert_name not in seen_certs:
+                certs_opened.append(cert_name)
+                seen_certs.add(cert_name)
+        if event_type == "form_submit":
+            submitted_brief = True
+        if event_type == "brief_submitted":
+            submitted_brief = True
+
+        dwell_ms = _coerce_event_int(payload.get("dwell_ms")) or 0
+        if dwell_ms > 0:
+            dwell_key = (session_id, page_path)
+            dwell_by_page[dwell_key] = max(dwell_by_page.get(dwell_key, 0), dwell_ms)
+        timeline.append(_tracking_demo_timeline_event(row, payload))
+
+    total_dwell_seconds = sum(dwell_by_page.values()) // 1000
+    last_seen_ts = int(event_rows[-1]["ts"] or 0)
+    if match_summary.get("brief"):
+        submitted_brief = True
+    if match_summary.get("result", {}).get("recommended_skus") and not products_viewed:
+        for sku in match_summary["result"]["recommended_skus"]:
+            slug = str(sku.get("id") or "")
+            title = str(sku.get("name") or slug)
+            if slug or title:
+                products_viewed.append((slug, title))
+    return {
+        "group_key": group_key,
+        "buyer_id": buyer_id,
+        "visitor_id": visitor_id,
+        "is_anonymous": is_anonymous,
+        "name": meta["name"],
+        "country_flag": meta["country_flag"],
+        "country_name": meta["country_name"],
+        "archetype": "anonymous" if is_anonymous else meta["archetype"],
+        "archetype_label": meta["archetype_label"],
+        "event_count": len(event_rows),
+        "session_count": len(sessions),
+        "last_seen_ts": last_seen_ts,
+        "last_seen_relative": _relative_time(now_ts, last_seen_ts),
+        "submitted_brief": submitted_brief,
+        "products_viewed": products_viewed,
+        "certs_opened": certs_opened,
+        "total_dwell_seconds": total_dwell_seconds,
+        "dwell_human": _human_dwell(total_dwell_seconds),
+        "timeline": timeline,
+        "match_summary": match_summary,
+        "ai_summary": summary_row["summary"] if summary_row else None,
+        "ai_summary_at": summary_row["generated_at"] if summary_row else None,
+    }
+
+
+def _tracking_demo_group_rows(group_key: str) -> list[sqlite3.Row]:
+    where_sql, value = _tracking_demo_group_filter(group_key)
+    with _db() as conn:
+        live_rows = conn.execute(
+            f"""
+            SELECT *
+            FROM web_events
+            WHERE COALESCE(is_demo, 0) = 0
+              AND COALESCE(campaign_id, '') != ?
+              AND {where_sql}
+            ORDER BY ts ASC
+            """,
+            (TRACKING_SEED_CAMPAIGN_ID, value),
+        ).fetchall()
+        if live_rows:
+            return live_rows
+        return conn.execute(
+            f"""
+            SELECT *
+            FROM web_events
+            WHERE campaign_id = ? AND {where_sql}
+            ORDER BY ts ASC
+            """,
+            (TRACKING_SEED_CAMPAIGN_ID, value),
+        ).fetchall()
+
+
+def _tracking_demo_brief_text(event_rows: list[sqlite3.Row]) -> str:
+    for row in event_rows:
+        if row["event_type"] not in {"form_submit", "brief_submitted"}:
+            continue
+        payload = _tracking_demo_payload_json(row)
+        brief = str(payload.get("brief_text") or payload.get("challenge_text") or "").strip()
+        if brief:
+            return brief
+    return ""
+
+
+def _tracking_demo_view_model() -> dict:
+    now_ts = int(time.time())
+    with _db() as conn:
+        live_event_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM web_events
+            WHERE COALESCE(is_demo, 0) = 0
+              AND COALESCE(campaign_id, '') != ?
+            """,
+            (TRACKING_SEED_CAMPAIGN_ID,),
+        ).fetchone()[0]
+        live_match_count = conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM match_sessions
+            WHERE COALESCE(campaign_id, '') != ?
+            """,
+            (TRACKING_SEED_CAMPAIGN_ID,),
+        ).fetchone()[0]
+        use_live = bool(live_event_count or live_match_count)
+        summary_scope = TRACKING_LIVE_SUMMARY_SCOPE if use_live else TRACKING_SEED_CAMPAIGN_ID
+        if use_live:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM web_events
+                WHERE COALESCE(is_demo, 0) = 0
+                  AND COALESCE(campaign_id, '') != ?
+                ORDER BY ts ASC
+                """,
+                (TRACKING_SEED_CAMPAIGN_ID,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM web_events
+                WHERE campaign_id = ?
+                ORDER BY ts ASC
+                """,
+                (TRACKING_SEED_CAMPAIGN_ID,),
+            ).fetchall()
+        sent_count = conn.execute(
+            """
+            SELECT COUNT(DISTINCT profile_slug || '|' || run_id)
+            FROM send_tracking
+            WHERE send_status = 'sent'
+              AND run_id NOT LIKE 'test_%'
+              AND is_test = 0
+            """
+        ).fetchone()[0]
+        summary_rows = conn.execute(
+            """
+            SELECT *
+            FROM tracking_ai_summary
+            WHERE campaign_id = ?
+            """,
+            (summary_scope,),
+        ).fetchall()
+
+    summaries = {row["group_key"]: row for row in summary_rows}
+    events_by_group: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        group_key = _tracking_demo_group_key(row)
+        if group_key:
+            events_by_group.setdefault(group_key, []).append(row)
+
+    buyers = [
+        _tracking_demo_group_model(
+            group_key,
+            event_rows,
+            summaries.get(group_key),
+            now_ts,
+        )
+        for group_key, event_rows in events_by_group.items()
+    ]
+    buyers.sort(key=lambda buyer: buyer["last_seen_ts"], reverse=True)
+
+    product_counts: dict[str, int] = {}
+    product_titles: dict[str, str] = {}
+    for event_rows in events_by_group.values():
+        for row in event_rows:
+            if row["event_type"] != "product_view":
+                continue
+            payload = _tracking_demo_payload_json(row)
+            slug = str(payload.get("slug") or "")
+            title = _tracking_demo_product_title(slug, payload.get("title"))
+            product_key = slug or title
+            if product_key:
+                product_counts[product_key] = product_counts.get(product_key, 0) + 1
+                product_titles[product_key] = title
+
+    emails_sent = max(int(sent_count or 0), len(buyers)) if use_live else len(TRACKING_DEMO_KNOWN_BUYERS)
+    clickers = sum(
+        1 for buyer in buyers
+        if any(ev["event_type"] in {"email_click", "token_identify", "page_view"} for ev in buyer["timeline"])
+    )
+    if not use_live:
+        clickers = emails_sent
+    completed_matches = sum(
+        1 for buyer in buyers
+        if buyer["match_summary"].get("status") in {"completed", "brief_submitted"}
+    )
+    kpis = {
+        "campaign_id": summary_scope,
+        "data_mode": "live" if use_live else "seeded",
+        "emails_sent": emails_sent,
+        "clickers": clickers,
+        "click_rate": round(clickers / emails_sent * 100) if emails_sent else 0,
+        "hot_leads": sum(1 for buyer in buyers if buyer["submitted_brief"]),
+        "completed_matches": completed_matches,
+        "total_events": len(rows),
+    }
+
+    max_product_views = max(product_counts.values(), default=0)
+    top_products = [
+        {
+            "slug": slug,
+            "title": product_titles[slug],
+            "views": views,
+            "bar_pct": (
+                round(views / max_product_views * 100) if max_product_views else 0
+            ),
+        }
+        for slug, views in sorted(
+            product_counts.items(),
+            key=lambda item: (-item[1], product_titles[item[0]]),
+        )[:5]
+    ]
+
+    top_buyers_source = sorted(
+        buyers,
+        key=lambda buyer: (-buyer["total_dwell_seconds"], buyer["name"]),
+    )[:5]
+    max_buyer_dwell = max(
+        (buyer["total_dwell_seconds"] for buyer in top_buyers_source),
+        default=0,
+    )
+    top_buyers = [
+        {
+            "name": buyer["name"],
+            "country_flag": buyer["country_flag"],
+            "dwell_human": buyer["dwell_human"],
+            "bar_pct": (
+                round(buyer["total_dwell_seconds"] / max_buyer_dwell * 100)
+                if max_buyer_dwell
+                else 0
+            ),
+        }
+        for buyer in top_buyers_source
+    ]
+
+    return {
+        "kpis": kpis,
+        "data_mode": "live" if use_live else "seeded",
+        "buyers": buyers,
+        "top_products": top_products,
+        "top_buyers": top_buyers,
+    }
+
+
+@app.get("/buyer-tracking", response_class=HTMLResponse)
+@app.get("/tracking-demo", response_class=HTMLResponse)
+def tracking_demo(
+    request: Request,
+    current_user: str = Depends(require_admin),
+) -> HTMLResponse:
+    view_model = _tracking_demo_view_model()
+    return templates.TemplateResponse(
+        "tracking_demo.html",
+        {
+            "request": request,
+            "current_user_display": _user_display_name(current_user),
+            **view_model,
+        },
+    )
+
+
+def _tracking_demo_summary_prompt(group: dict, event_rows: list[sqlite3.Row]) -> str:
+    product_names = [title for _, title in group["products_viewed"]]
+    products = ", ".join(product_names) if product_names else "None"
+    certs = ", ".join(group["certs_opened"]) if group["certs_opened"] else "None"
+    brief_text = _tracking_demo_brief_text(event_rows) or "None"
+    submitted = "yes" if group["submitted_brief"] else "no"
+    match_summary = group.get("match_summary") or {}
+    match_answers = "; ".join(
+        f"{item['question_label']}: {item['answer_label']}"
+        for item in match_summary.get("answers", [])
+        if item.get("answer_label")
+    ) or "None"
+    recommended = ", ".join(
+        str(sku.get("name") or sku.get("id") or "")
+        for sku in match_summary.get("result", {}).get("recommended_skus", [])
+    ) or "None"
+    return "\n".join(
+        [
+            "You are a B2B sales assistant for Redvia. Based on this buyer's website behavior and Find Your Match answers, write 2-3 concise English follow-up notes for sales.",
+            "Requirements:",
+            "- Identify the likely product/application interest.",
+            "- Mention the concrete next step: which spec sheet, CoA, sample, or question to send.",
+            "- Do not use markdown bullets. Do not repeat the raw timeline.",
+            "",
+            f"Buyer: {group['name']} ({group['country_name']})",
+            f"Status: {group['archetype_label']}",
+            (
+                f"Sessions: {group['session_count']}  "
+                f"Events: {group['event_count']}  "
+                f"Dwell: {group['dwell_human']}"
+            ),
+            f"Brief submitted: {submitted}",
+            f"Match answers: {match_answers}",
+            f"Recommended SKUs: {recommended}",
+            f"Viewed products: {products}",
+            f"Opened certificates: {certs}",
+            f"Brief text if any: {brief_text}",
+            "",
+            "Return only the follow-up notes, no prefix and no JSON.",
+        ]
+    )
+
+
+def _call_tracking_demo_llm(prompt: str) -> tuple[str, str, int | None, int | None]:
+    api_key = (
+        os.environ.get("GLM_API_KEY") or os.environ.get("LLM_API_KEY") or ""
+    ).strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="LLM 未配置 GLM_API_KEY",
+        )
+
+    model = os.environ.get("LLM_MODEL", "glm-4-flash")
+    try:
+        from openai import OpenAI
+
+        client_kwargs: dict = {"api_key": api_key}
+        base_url = (os.environ.get("LLM_BASE_URL") or "").strip()
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        client_kwargs["timeout"] = float(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
+        client = OpenAI(**client_kwargs)
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4,
+            max_tokens=300,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        detail = _truncate(str(exc).replace(api_key, "***"), 500)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM 调用失败: {detail}",
+        ) from exc
+
+    summary = str(response.choices[0].message.content or "").strip()
+    usage = getattr(response, "usage", None)
+    token_input = getattr(usage, "prompt_tokens", None) if usage else None
+    token_output = getattr(usage, "completion_tokens", None) if usage else None
+    return summary, model, token_input, token_output
+
+
+@app.post("/buyer-tracking/summarize/{group_key}")
+@app.post("/tracking-demo/summarize/{group_key}")
+def tracking_demo_summarize(
+    group_key: str,
+    current_user: str = Depends(require_admin),
+) -> dict:
+    if not re.fullmatch(r"(b\d+|v[A-Za-z0-9_-]+)", group_key or ""):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid group_key",
+        )
+
+    event_rows = _tracking_demo_group_rows(group_key)
+    if not event_rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tracking visitor not found",
+        )
+    summary_scope = (
+        TRACKING_LIVE_SUMMARY_SCOPE
+        if any(
+            int(row["is_demo"] or 0) == 0
+            and str(row["campaign_id"] or "") != TRACKING_SEED_CAMPAIGN_ID
+            for row in event_rows
+        )
+        else TRACKING_SEED_CAMPAIGN_ID
+    )
+
+    with _db() as conn:
+        cached = conn.execute(
+            """
+            SELECT summary, generated_at, model
+            FROM tracking_ai_summary
+            WHERE group_key = ? AND campaign_id = ?
+            """,
+            (group_key, summary_scope),
+        ).fetchone()
+    if cached:
+        return {
+            "summary": cached["summary"],
+            "generated_at": cached["generated_at"],
+            "model": cached["model"],
+            "cached": True,
+        }
+
+    group = _tracking_demo_group_model(group_key, event_rows, None, int(time.time()))
+    prompt = _tracking_demo_summary_prompt(group, event_rows)
+    summary, model, token_input, token_output = _call_tracking_demo_llm(prompt)
+    generated_at = dt.datetime.now().isoformat(timespec="seconds")
+
+    with _db() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO tracking_ai_summary (
+                group_key, campaign_id, summary, model, generated_at,
+                token_input, token_output
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                group_key,
+                summary_scope,
+                summary,
+                model,
+                generated_at,
+                token_input,
+                token_output,
+            ),
+        )
+        conn.commit()
+
+    return {
+        "summary": summary,
+        "generated_at": generated_at,
+        "model": model,
+        "cached": False,
+    }
+
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page(
     request: Request,
+    synthesis: Optional[str] = None,
     current_user: str = Depends(require_admin),
 ) -> HTMLResponse:
     with _db() as conn:
@@ -2020,15 +4141,35 @@ def admin_page(
         content_flags = conn.execute(
             "SELECT * FROM content_flags WHERE resolved = 0 ORDER BY flagged_at DESC"
         ).fetchall()
+        last_synthesis = conn.execute(
+            "SELECT * FROM synthesis_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
     return templates.TemplateResponse(
         "admin.html",
         {
             "request": request,
             "users": users,
             "content_flags": content_flags,
+            "last_synthesis": dict(last_synthesis) if last_synthesis else None,
+            "synthesis_flash": synthesis,
             "current_user": current_user,
             "current_user_display": _user_display_name(current_user),
         },
+    )
+
+
+@app.post("/admin/synthesize")
+def trigger_synthesis(_: str = Depends(require_admin)) -> RedirectResponse:
+    from webui.synthesizer import run_synthesis
+
+    threading.Thread(
+        target=run_synthesis,
+        kwargs={"db_path": DB_PATH, "trigger": "manual"},
+        daemon=True,
+    ).start()
+    return RedirectResponse(
+        "/admin?synthesis=queued",
+        status_code=status.HTTP_303_SEE_OTHER,
     )
 
 

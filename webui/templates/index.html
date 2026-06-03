@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Sales Feedback</title>
-<link rel="stylesheet" href="/static/style.css?v=4">
+<link rel="stylesheet" href="/static/style.css?v=5">
 <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 <script src="/static/translate.js"></script>
 </head>
@@ -16,6 +16,7 @@
     {% if current_user_is_admin %} · <a href="/admin">Admin</a>{% endif %}
     · <a href="/test" class="btn-secondary">测试发送</a>
     · <a href="/inbox" class="btn-secondary">收件箱</a>
+    · <a href="/buyer-tracking" class="btn-secondary">Buyer Tracking</a>
   </div>
   <div class="meta">
     {% if show_excluded %}
