@@ -1,170 +1,73 @@
-# 出海 B2B Pipeline
+# Chuhai Pipeline
 
-把 `01_keywords.md` 串到 `02_buyers.xlsx`、`03_xiaoman.xlsx` 和 `03_xiaoman_summary.md` 的半自动出海买家发现流水线。
+> An end-to-end outbound B2B buyer-acquisition system for a Ningxia goji berry producer expanding overseas under the **Redvia** brand. Built solo, in active use.
 
-## 工作流
+<p align="center">
+  <img src="docs/images/redvia-site-home.jpg" alt="Redvia marketing site home page" width="640">
+</p>
 
-```text
-step1 关键词生成         手工 / Claude web，不在本仓
-   ↓
-step2 Serper 搜索        本仓覆盖：serper_search.py + buyer_extract.py
-   ↓
-step3 Xiaoman 匹配+联系人 本仓覆盖：xiaoman_playwright.py + pipeline.py
-   ↓
-step4 官网核验+评级       本仓覆盖：website_verify.py + llm_judge.py
-   ↓
-step5 枸杞分析           已并入 step4 输出字段
-```
+---
 
-本仓的责任边界是：
+**English** · An outbound pipeline that runs end-to-end: SERP search for overseas wholesale buyers → trade-database enrichment for contact details → website verification with an LLM judge → per-buyer persona synthesis → cold email with first-party click tracking → reply intake feeding back into the next outreach cycle. A FastAPI WebUI lets the sales team prioritise leads and review replies; a Cloudflare Worker serves the Redvia marketing site and closes the tracking loop.
 
-- 读 `runs/<run_name>/01_keywords.md`
-- 跑 step2 生成 `02_buyers.xlsx`
-- 跑 step3 生成 `03_xiaoman.xlsx`
-- 跑 step4 生成 `04_verified.xlsx`
-- 生成或重算 `03_xiaoman_summary.md`
+**中文** · 一条从关键词到外联回复的出海客户获取流水线：Google SERP 抓买家 → 小满补全联系人 → 抓官网用 LLM 判断是否真买家 → 合成决策人画像 → 个性化邮件外联 + 一方点击追踪 → IMAP 回复回流到 sales 反馈面板触发回复合成。替代原先"靠 ChatGPT 手搜 + Excel 手清洗"的工作流，服务一家正在出海的宁夏枸杞生产商（海外品牌 Redvia）。
 
-## 环境要求
+---
 
-- macOS
-- Python 3.9+
-- 一个可用的 Serper API key
-- 可登录的小满账号
+## What's inside
 
-## 安装
+| Module          | Purpose                                                       | Stack                                  |
+|-----------------|---------------------------------------------------------------|----------------------------------------|
+| `pipeline.py`   | Five-step orchestrator with file-based checkpoints            | Python 3.12, openpyxl, dotenv          |
+| `webui/`        | Sales feedback, lead priority, reply synthesis, admin         | FastAPI · HTMX · Jinja2 · SQLite       |
+| `redvia-site/`  | Static marketing site at `redvia.com`                         | Vanilla HTML/CSS/JS · design tokens    |
+| `cloudflare/`   | Tracking links, grounded chat, asset hosting                  | Workers · D1 · R2                      |
+| LLM judge       | Provider-agnostic via any OpenAI-compatible API               | OpenAI · GLM · DeepSeek                |
+| Xiaoman driver  | Headful Chromium with persistent profile + QR-code login      | Playwright                             |
 
-建议直接用项目自带脚本：
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the system map, component breakdown, and data flow.
 
-```bash
-cd ~/Documents/chuhai_pipeline
-bash setup.sh
-cp .env.example .env
-```
+## Workflow overview
 
-如果手动安装，等价命令如下：
+<p align="center">
+  <img src="docs/images/workflow-overview.png" alt="End-to-end workflow diagram" width="720">
+</p>
+
+_The annotated diagram is in Chinese; [`ARCHITECTURE.md`](ARCHITECTURE.md) is the English equivalent._
+
+## Quick start
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
-cp .env.example .env
+cp .env.example .env             # fill in keys
+
+python pipeline.py runs/<date>_<product>/01_keywords.md
 ```
 
-然后把 `.env` 里的 `SERPER_API_KEY` 填好。
+Optional flags: `--skip-step3` (skip Xiaoman), `--skip-contacts` (companies only, no decision-maker emails), `--skip-step4` (skip website verification), `--max-queries N`.
 
-如果要用 `send_outreach.py` 通过 Outlook SMTP 做邮件 dry-run，先在 Outlook 账号开启 2FA（account.microsoft.com → Security），生成 App Password（不是登录密码），然后在 `.env` 里填 `SMTP_HOST=smtp-mail.outlook.com`、`SMTP_PORT=587`、`SMTP_USER=<your outlook>`、`SMTP_PASS=<app password>`。默认 dry-run 命令：`python send_outreach.py runs/2026-04-30/05_profiles/ --test-recipient your-other@email.com`；如需清空历史发送状态后重跑，加 `--reset`；真发必须显式加 `--live --i-confirm-live-send`。
+First run of step 3 opens a Chromium window for Xiaoman QR-code login; the session is persisted in `~/.xiaoman_playwright_profile/` so subsequent runs are non-interactive.
 
-## 首次跑 step3：扫码登录说明
+## Deployment
 
-step3 不读用户名密码文件，而是直接用 Playwright 打开真实 Chromium。
+| Component       | Hosted on                  |
+|-----------------|----------------------------|
+| Pipeline        | Operator's Mac             |
+| WebUI           | Fly.io (Singapore region)  |
+| Redvia site     | Cloudflare (`redvia.com`)  |
+| Tracking + chat | Cloudflare Worker + D1     |
 
-首次执行 step3 时会弹出小满登录页，需要你手动扫码一次。登录成功后，浏览器 profile 会持久保存在：
+## Status
 
-```bash
-~/.xiaoman_playwright_profile/
-```
+Solo project, in active use. A few honest notes for readers:
 
-后续再次跑 step3 会复用这个 profile，通常不需要重复登录。若登录态失效，重新扫码即可；若要彻底清空登录态，再删除这个目录。
+- The pipeline still runs on the operator's Mac because Xiaoman requires an authenticated headful Chromium session. Replacing it with an API-based trade database (Apollo / Clay) is the unlock for moving the orchestrator to a cloud server.
+- `webui/app.py` has grown into a ~4000-line monolith. Splitting into routers + services + db layer is the next refactor.
+- Test coverage is light — `webui/test_lead_priority.py` covers the scoring rules; the rest leans on real-data smoke runs.
+- A multi-person collaboration design (PR workflow, devcontainer, secret migration to corporate accounts, sales-feedback-to-issues bridge) is being written up separately.
 
-## 常用命令
+## License
 
-激活环境：
-
-```bash
-source .venv/bin/activate
-```
-
-完整跑 step2 + step3（默认抓公司 + top-1 联系人）：
-
-```bash
-python pipeline.py runs/2026-04-14_goji/01_keywords.md
-```
-
-step3 只抓公司，不抓联系人：
-
-```bash
-python pipeline.py runs/2026-04-14_goji/01_keywords.md --skip-contacts
-```
-
-只跑 step2，不进小满：
-
-```bash
-python pipeline.py runs/2026-04-14_goji/01_keywords.md --skip-step3
-```
-
-限制 Serper 查询数，适合冒烟：
-
-```bash
-python pipeline.py runs/2026-04-14_goji/01_keywords.md --max-queries 30
-```
-
-增加 step3 翻页数：
-
-```bash
-python pipeline.py runs/2026-04-14_goji/01_keywords.md --xiaoman-max-pages 2
-```
-
-放慢 step3 节奏，降低 captcha 风险：
-
-```bash
-python pipeline.py runs/2026-04-14_goji/01_keywords.md --xiaoman-search-interval 8
-```
-
-跳过官网核验和 LLM 判断：
-
-```bash
-python pipeline.py runs/2026-04-14_goji/01_keywords.md --skip-step4
-```
-
-不重跑 step3，只重算 summary：
-
-```bash
-python pipeline.py --summary-only runs/test_smoke_rerun_2026-04-10
-```
-
-## 运行产物
-
-每次运行建议落在单独的 `runs/<run_name>/` 目录下，关键产物如下：
-
-- `01_keywords.md`
-  step1 产出的关键词输入文件，本仓只消费，不负责生成。
-- `02_buyers.xlsx`
-  step2 产出的买家候选列表。step3 读取这里的 `Company Name`、`Country`、`Lead Type`。
-- `02_serper_raw.json`
-  Serper 原始返回，主要用于审计和排查抽取问题。
-- `03_xiaoman.xlsx`
-  step3 产出的公司匹配结果；top-1 若抓到多个联系人，会展开成多行，重复公司字段并填联系人列。
-- `03_xiaoman_summary.md`
-  对 `02_buyers.xlsx` + `03_xiaoman.xlsx` 的摘要汇总，适合 demo 或快速复盘。
-- `03_xiaoman_progress.json`
-  step3 断点续跑状态。记录每个 buyer 的 `completed`、`no_matches`、`interrupted` 等状态。
-- `04_verified.xlsx`
-  step4 官网核验结果，只保留每个 buyer 的 top-1 公司，包含 B2B/B2C、目标客户、竞争对手、枸杞、评级和外联角度。
-- `pipeline.log`
-  本次运行的日志。
-
-## 断点续跑
-
-`pipeline.py` 会按文件和进度状态决定是否跳过步骤：
-
-- `02_buyers.xlsx` 已存在：跳过 step2
-- `03_xiaoman.xlsx` 已存在：读取已有行和 `03_xiaoman_progress.json`，自动跳过已完成 buyer，只继续未完成 buyer
-- `04_verified.xlsx` 已存在：跳过 step4
-
-这意味着：
-
-- 要重跑 step2，删掉 `02_buyers.xlsx`
-- 要完整重跑 step3，删掉 `03_xiaoman.xlsx` 和 `03_xiaoman_progress.json`
-- 要从中断处继续 step3，直接重跑同一个 `01_keywords.md`；例如第 21 个 buyer 触发验证码，下次会从第 21 个未完成 buyer 自动继续
-- 要重跑 step4，删掉 `04_verified.xlsx`
-- 只想更新汇总，不要重跑 step3，用 `--summary-only`
-
-## 已知限制
-
-- 小满会触发 rate-limit / captcha；脚本不会绕过验证码，出现后需要人工在弹出的 Chromium 里处理。
-- step3 的 top-1 不等于 100% 正确命中，尤其在名字短、歧义大或跨国实体场景下，仍需要人工复核。
-- `03_xiaoman_summary.md` 里的国家类指标是汇总信号，不是最终 truth。
-- 联系人抓取只覆盖 top-1 公司；rank 2、3... 仍然只有公司信息，没有联系人正文。
-- step4 依赖官网可访问性和 LLM 判断，结果适合作为优先级信号，不应替代人工最终复核。
-- 现在的冒烟规模适合 demo 和验证链路，不等于生产跑量配置；生产前要单独评估 query cap、sleep、captcha 频率和复核成本。
+Internal project published for portfolio review. Not licensed for commercial reuse.
