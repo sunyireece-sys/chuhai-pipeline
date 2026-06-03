@@ -10,6 +10,8 @@
   <link rel="stylesheet" href="assets/css/base.css">
   <link rel="stylesheet" href="assets/css/components.css">
   <script defer src="assets/js/site.js"></script>
+  <link rel="stylesheet" href="assets/css/chat-widget-preview.css">
+  <script defer src="assets/js/chat-widget-preview.js"></script>
 </head>
 <body>
 
@@ -61,6 +63,25 @@
     </div>
   </section>
 
+  <!--
+    临时演示入口 · 2026-05-22 内部会议用
+    生产化路径见 工作日志/2026-05-22_lead_capture_设计与路线图.md §13
+    演示完后整段删除即可。
+  -->
+  <section class="section--tight" style="background: var(--moss-soft); border-top: 1px solid rgba(93,112,72,0.15); border-bottom: 1px solid rgba(93,112,72,0.15); padding: 2.2rem 0;">
+    <div class="container" style="display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; flex-wrap: wrap;">
+      <div style="flex: 1 1 360px; min-width: 280px;">
+        <p class="eyebrow" style="margin-bottom: 0.4rem; color: var(--honey);">— Find Your Match —</p>
+        <h2 style="font-family: var(--font-display); font-style: italic; font-weight: 500; color: var(--deep-moss); font-size: clamp(1.6rem, 2.6vw, 2.1rem); line-height: 1.2; margin: 0 0 0.3rem;">Find Your Goji Ingredient Match.</h2>
+        <p style="color: rgba(30,42,23,0.7); font-size: 0.95rem; max-width: 56ch; margin: 0;">Four quick questions, one tailored recommendation for your formulation.</p>
+      </div>
+      <div style="display: flex; gap: 0.6rem; flex-wrap: wrap;">
+        <a class="btn btn--primary" href="mockup/match.html">Try the match →</a>
+        <a class="btn btn--ghost" href="mockup/recommendation.html">View result page</a>
+      </div>
+    </div>
+  </section>
+
   <section class="cert-strip" aria-label="Certifications">
     <div class="container cert-strip__list">
       <span>EU BCS Organic</span>
@@ -81,10 +102,14 @@
         <p class="eyebrow">— Four Product Families —</p>
         <h2 class="section__title">Find the right goji form<br>without sorting through a catalog.</h2>
         <p class="section__sub">The full portfolio is organized by sourcing need: whole-fruit formats, ready-to-formulate purees, leaf formats, and concentrated functional ingredients.</p>
+        <div class="products__cta">
+          <a class="btn btn--primary" href="ingredients.html">See All 9 Products →</a>
+        </div>
       </div>
 
       <div class="product-family-grid">
         <article class="product-family-card product-family-card--berries">
+          <a class="product-family-card__cover" href="ingredients.html#whole-berries" aria-label="View Whole Berries family"></a>
           <div class="product-family-card__media product-family-card__media--triad">
             <img src="assets/img/products/ningxia-red-v2.jpg" alt="Ningxia red goji berries">
             <img src="assets/img/products/qinghai-red-v2.jpg" alt="Qinghai red goji berries">
@@ -103,6 +128,7 @@
         </article>
 
         <article class="product-family-card product-family-card--purees">
+          <a class="product-family-card__cover" href="ingredients.html#purees" aria-label="View Purees family"></a>
           <div class="product-family-card__media">
             <img src="assets/img/products/red-puree-v2.jpg" alt="Red goji puree">
             <img src="assets/img/products/black-puree-v2.jpg" alt="Black goji puree">
@@ -119,6 +145,7 @@
         </article>
 
         <article class="product-family-card product-family-card--leaf">
+          <a class="product-family-card__cover" href="ingredients.html#leaf-and-concentrates" aria-label="View Leaf Formats family"></a>
           <div class="product-family-card__media">
             <img src="assets/img/products/leaf-tea-v2.jpg" alt="Goji leaf tea">
             <img src="assets/img/products/tea-powder-v2.jpg" alt="Goji leaf matcha powder">
@@ -135,6 +162,7 @@
         </article>
 
         <article class="product-family-card product-family-card--concentrates">
+          <a class="product-family-card__cover" href="ingredients.html#leaf-and-concentrates" aria-label="View Concentrates and Oils family"></a>
           <div class="product-family-card__media">
             <img src="assets/img/products/polysaccharide-v2.jpg" alt="Goji polysaccharide powder">
             <img src="assets/img/products/seed-oil-v2.jpg" alt="Goji seed oil">
@@ -185,16 +213,6 @@
             <a href="mailto:trade@redvia-bry.com">trade@redvia-bry.com</a><br>
             <a href="tel:+16513991568">US +1 (651) 399-1568</a><br>
             <a href="tel:+8613918338133">CN +86 139 1833 8133</a>
-          </div>
-        </div>
-
-        <div>
-          <div class="footer__heading">Shanghai HQ</div>
-          <div class="footer__addr">
-            <span class="footer__addr-label">Headquarters</span>
-            29F, Tower A, Far East International Plaza<br>
-            No. 317 Xianxia Road<br>
-            Changning District, Shanghai
           </div>
         </div>
 
