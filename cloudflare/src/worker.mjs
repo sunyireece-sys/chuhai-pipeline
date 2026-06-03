@@ -112,7 +112,10 @@ export default {
         return json(result, 200, request, env);
       }
 
-      return env.ASSETS.fetch(request);
+      const assetResp = await env.ASSETS.fetch(request);
+      const newHeaders = new Headers(assetResp.headers);
+      newHeaders.set('X-Robots-Tag', 'noindex, nofollow');
+      return new Response(assetResp.body, { status: assetResp.status, headers: newHeaders });
     } catch (error) {
       console.error('tracking_worker_error', error && error.stack ? error.stack : error);
       const status = error && error.status ? error.status : 500;

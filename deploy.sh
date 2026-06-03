@@ -15,15 +15,18 @@ if [[ ! -x "$FLYCTL" ]]; then
 fi
 
 runs=()
-while IFS= read -r profiles_dir; do
-    run_dir="${profiles_dir%/05_profiles/profiles}"
+while IFS= read -r run_dir; do
+    profiles_dir="$run_dir/05_profiles/profiles"
+    if [[ ! -d "$profiles_dir" ]]; then
+        continue
+    fi
     run="$(basename "$run_dir")"
     if [[ "$run" =~ [[:space:]] ]]; then
         echo "run name contains whitespace and cannot be used in Dockerfile COPY: $run" >&2
         exit 1
     fi
     runs+=("$run")
-done < <(find "$ROOT/runs" -type d -path "$ROOT/runs/*/05_profiles/profiles" | sort)
+done < <(find "$ROOT/runs" -mindepth 1 -maxdepth 1 -type d | sort)
 
 if [[ ${#runs[@]} -eq 0 ]]; then
     echo "No valid runs found under runs/*/05_profiles/profiles" >&2

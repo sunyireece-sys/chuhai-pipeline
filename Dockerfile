@@ -15,6 +15,10 @@ COPY runs/2026-05-07_goji_de_fr_gb_nl/05_profiles/profiles /app/runs/2026-05-07_
 COPY runs/2026-05-07_goji_de_fr_gb_nl/05_profiles/contacts /app/runs/2026-05-07_goji_de_fr_gb_nl/05_profiles/contacts
 COPY runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/profiles /app/runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/profiles
 COPY runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/contacts /app/runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/contacts
+COPY runs/test_2026-05-08_goji_tr_ru/05_profiles/profiles /app/runs/test_2026-05-08_goji_tr_ru/05_profiles/profiles
+COPY runs/test_2026-05-08_goji_tr_ru/05_profiles/contacts /app/runs/test_2026-05-08_goji_tr_ru/05_profiles/contacts
+COPY runs/test_2026-05-11_ranking_validation/05_profiles/profiles /app/runs/test_2026-05-11_ranking_validation/05_profiles/profiles
+COPY runs/test_2026-05-11_ranking_validation/05_profiles/contacts /app/runs/test_2026-05-11_ranking_validation/05_profiles/contacts
 # DATA-END
 
 ENV FEEDBACK_DB_PATH=/data/feedback.db

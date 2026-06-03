@@ -34,6 +34,22 @@ runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/*
 !runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/profiles/**
 !runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/contacts/
 !runs/MEETING_DEMO_FULL_RUN_2026-04-24/05_profiles/contacts/**
+!runs/test_2026-05-08_goji_tr_ru/
+runs/test_2026-05-08_goji_tr_ru/*
+!runs/test_2026-05-08_goji_tr_ru/05_profiles/
+runs/test_2026-05-08_goji_tr_ru/05_profiles/*
+!runs/test_2026-05-08_goji_tr_ru/05_profiles/profiles/
+!runs/test_2026-05-08_goji_tr_ru/05_profiles/profiles/**
+!runs/test_2026-05-08_goji_tr_ru/05_profiles/contacts/
+!runs/test_2026-05-08_goji_tr_ru/05_profiles/contacts/**
+!runs/test_2026-05-11_ranking_validation/
+runs/test_2026-05-11_ranking_validation/*
+!runs/test_2026-05-11_ranking_validation/05_profiles/
+runs/test_2026-05-11_ranking_validation/05_profiles/*
+!runs/test_2026-05-11_ranking_validation/05_profiles/profiles/
+!runs/test_2026-05-11_ranking_validation/05_profiles/profiles/**
+!runs/test_2026-05-11_ranking_validation/05_profiles/contacts/
+!runs/test_2026-05-11_ranking_validation/05_profiles/contacts/**
 # RUNS-END
 webui/feedback.db
 webui/__pycache__/
