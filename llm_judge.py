@@ -14,7 +14,8 @@ from dataclasses import dataclass
 
 GOJI_RE = re.compile(
     r"\b(goji|goji berry|goji berries|wolfberry|wolfberries|lycium barbarum|"
-    r"lycium chinense|goji powder|goji extract|dried goji|organic goji)\b|枸杞",
+    r"lycium chinense|goji powder|goji extract|dried goji|organic goji|"
+    r"kurt üzümü|kurt uzumu|kustovnice)\b|枸杞|годжи|годж",
     re.IGNORECASE,
 )
 CN_ENTITY_RE = re.compile(
@@ -55,6 +56,8 @@ class JudgeVerdict:
     track_match: str
     matched_track: str
     evidence_url: str
+    primary_vertical: str
+    food_supplement_focus: str
     rating_reason: str
     outreach_angle: str
     website_country: str
@@ -77,12 +80,21 @@ B2B/B2C rules:
 - B2C signals: shop now, add to cart, retail prices, direct consumer supplements/foods.
 - If both signals exist, output "Both".
 
-Target customer types:
-- 原料分销商: ingredient distributor, importer, wholesaler, superfood/botanical distributor.
-- OEM制造商: contract manufacturer, private label, nutraceutical/food supplement OEM.
-- 品牌商: finished-product health food, supplement, nutraceutical, superfood brand.
-- 竞争对手: own goji cultivation/farm/plantation, raw goji producer/extractor, China-based goji exporter.
-- 不相关: unrelated business or irrelevant retail/service company.
+Target customer types (判定基于主营品类是否与枸杞相邻；不要求当前已售枸杞——已售枸杞通过 goji_presence=Yes 和 rating=S 单独表达):
+- 原料分销商: B2B distributor / wholesaler / importer of food, supplement, herbal, botanical,
+  dried fruit, nuts, tea, superfood, or other adjacent raw materials. Even if the company
+  does not yet sell goji, an ingredient-side distributor in adjacent categories is a target.
+- OEM制造商: contract manufacturer, private label, or OEM in food, supplement, nutraceutical,
+  cosmetic, or herbal formulation. Goji is not required.
+- 品牌商: brand or B2C retailer of finished products in food, beverage, tea, supplement,
+  nutraceutical, herbal medicine, traditional medicine, healthy/organic food,
+  superfood, or cosmetic categories. Tea brands, dried-fruit brands, herbal-medicine
+  shops, organic-food retailers, and beauty/skincare brands all qualify, even if no
+  goji SKU is currently listed.
+- 竞争对手: own goji cultivation/farm/plantation, raw goji producer/extractor,
+  China-based goji exporter.
+- 不相关: 主营与食品/补剂/草本/化妆品/茶/干果/有机生活方式全无关联——例如电子产品、家电、
+  服装鞋帽、运动器材、汽车、建材、纯服务业、广告、旅游、电信、媒体。仅对真正无品类邻接的公司使用。
 
 Competitor rules:
 - If the company produces, farms, extracts, or exports goji as its own raw ingredient,
@@ -105,6 +117,25 @@ Website-based country judgement:
   "United Kingdom", "Italy"). If website text is too thin to decide, output
   "Unclear". Do not output city or region.
 
+Primary vertical:
+- supplement: dietary supplement / nutraceutical / functional food brand.
+- food_beverage: food, beverage, snack, tea, herbal infusion brand or distributor.
+- herbal_medicine: TCM / Ayurveda / herbal pharmacy / botanical medicine.
+- cosmetic_beauty: skincare / cosmetic / beauty.
+- fitness_equipment: sports gear / activewear / fitness apparel / training equipment.
+- general_marketplace: broad-category marketplace where food or supplements are a slice.
+- agriculture_raw: farm produce, fresh fruit, raw nuts, or non-processed agriculture.
+- other: use only if none of the above fit.
+Judge primary_vertical by homepage navigation, first-level categories, and About positioning.
+Do not lower rating only because the primary vertical is broad or costly to sell into.
+
+Food/supplement focus:
+- core: food, supplements, herbs, or botanicals are the main business, >60% SKU or marketing focus.
+- partial: food/supplement is a meaningful category, about 20-60%.
+- marginal: food/supplement exists but is a small edge category, <20%.
+- none: no food/supplement category.
+Use first-level navigation, homepage promoted sections, and product keyword share.
+
 Functional tracks for Potential Buyer:
 - 护眼/眼健康: eye health, lutein, zeaxanthin, macular, vision support, blue light.
 - 抗氧化/抗衰老: antioxidant, anti-aging, longevity, oxidative stress, free radical, ORAC.
@@ -123,6 +154,10 @@ Track Match:
 Rating matrix:
 - S: concrete website evidence already shows goji/wolfberry/lycium product or formula.
 - A: target company, no goji found, but business/product catalog is relevant.
+  Adjacent-category brands (tea, dried fruit, herbal, cosmetic, organic food)
+  with primary_vertical in {food_beverage, herbal_medicine, cosmetic_beauty}
+  and food_supplement_focus in {core, partial} should land at A unless the
+  website is too thin to verify.
 - B: insufficient info, thin/inaccessible website, or cannot verify.
 - P: only for terminal brands, no goji found, strong functional track match and goji has a plausible formula angle.
 - Z: excluded record, especially direct competitors that should not receive sales outreach.
@@ -135,7 +170,7 @@ For non-P ratings, p_priority must be "".
 Output JSON keys:
 b2b_or_b2c, is_target, customer_type, is_competitor, goji_presence, rating,
 p_priority, track_match, matched_track, evidence_url, rating_reason,
-outreach_angle, website_country.
+primary_vertical, food_supplement_focus, outreach_angle, website_country.
 
 Allowed values:
 b2b_or_b2c: "B2B" | "B2C" | "Both"
@@ -145,6 +180,8 @@ goji_presence: "Yes" | "No" | "Unclear"
 rating: "S" | "A" | "B" | "P" | "Z"
 p_priority: "P1" | "P2" | "P3" | ""
 track_match: "强匹配" | "弱匹配" | "无匹配" | "N/A"
+primary_vertical: "supplement" | "food_beverage" | "herbal_medicine" | "cosmetic_beauty" | "fitness_equipment" | "general_marketplace" | "agriculture_raw" | "other"
+food_supplement_focus: "core" | "partial" | "marginal" | "none"
 rating_reason: Chinese, <=60 chars.
 outreach_angle: Chinese, <=40 chars.
 website_country: English country name or "Unclear"
@@ -171,6 +208,8 @@ def _coerce_verdict(data: dict) -> JudgeVerdict:
         track_match=str(data.get("track_match") or "N/A"),
         matched_track=str(data.get("matched_track") or ""),
         evidence_url=str(data.get("evidence_url") or ""),
+        primary_vertical=str(data.get("primary_vertical") or "other"),
+        food_supplement_focus=str(data.get("food_supplement_focus") or "none"),
         rating_reason=str(data.get("rating_reason") or "")[:60],
         outreach_angle=str(data.get("outreach_angle") or "")[:40],
         website_country=str(data.get("website_country") or "Unclear"),
@@ -213,6 +252,8 @@ def _cn_supplier_verdict(input: JudgeInput) -> JudgeVerdict:
         track_match="N/A",
         matched_track="",
         evidence_url="",
+        primary_vertical="other",
+        food_supplement_focus="none",
         rating_reason="中国本土供应商，非出海买家目标",
         outreach_angle="",
         website_country="China",

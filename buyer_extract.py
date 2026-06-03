@@ -23,6 +23,7 @@ BLACKLIST_DOMAINS = {
     "shopee", "made-in-china", "tradewheel", "go4worldbusiness", "exporthub",
     "tradeford", "ecplaza", "dhgate", "globalsources", "indiamart",
     "europages", "news-medical", "pmc",
+    "rbc", "cyberleninka", "elibrary", "kp", "lenta", "ria", "tass",
     "linkedin", "facebook", "twitter", "instagram", "youtube", "tiktok",
     "wikipedia", "wikidata", "crunchbase", "pinterest", "reddit",
     "indeed", "glassdoor", "yelp", "tripadvisor",
@@ -30,6 +31,7 @@ BLACKLIST_DOMAINS = {
     "youtube", "vimeo",
     "medium", "substack", "wordpress", "blogspot",
     "iherb", "vitacost",  # consumer retailers
+    "wildberries", "ozon", "yandex", "avito", "sbermegamarket", "joom", "sbermarket",
 }
 
 # If the title fragment matches one of these (case-insensitive), drop the row.
@@ -42,6 +44,8 @@ TITLE_BLACKLIST_PHRASES = {
 
 # Splitters used to chop a SERP title into candidate name + tail.
 TITLE_SPLITTERS = re.compile(r"\s+[-|–—:·•·]\s+")
+MARKETPLACE_PATTERN = re.compile(r"^(opt|mega|market|store|shop)[a-z]*\d+", re.IGNORECASE)
+MIN_NAME_CHARS = 4
 
 # Suffixes we strip from names.
 NAME_SUFFIX_NOISE = re.compile(
@@ -67,7 +71,8 @@ GENERIC_SUBDOMAIN_LABELS = {
 }
 
 GENERIC_BAD_NAMES = {
-    "store", "shop", "us", "uk", "de", "fr", "pmc",
+    "store", "shop", "spb", "msk", "rbc", "kp", "ria",
+    "opt", "tr", "ru", "us", "uk", "de", "fr", "pmc",
 }
 
 
@@ -104,6 +109,11 @@ def domain_is_blacklisted(domain: str) -> bool:
     return False
 
 
+def _is_marketplace_junk(domain: str) -> bool:
+    label = domain.split(".")[0].lower() if domain else ""
+    return bool(MARKETPLACE_PATTERN.match(label))
+
+
 def extract_company_name(title: str, domain: str) -> str:
     if not title:
         return ""
@@ -138,6 +148,18 @@ def domain_to_fallback_name(domain: str) -> str:
     if pretty.lower().startswith("store") and len(pretty) > 9:
         pretty = pretty[5:].strip()
     return pretty.title()
+
+
+def _is_valid_company_name(name: str) -> bool:
+    """Reject short fragments and tokens with no alphabetic chars."""
+    stripped = (name or "").strip()
+    if len(stripped) < 5:
+        return False
+    return bool(re.search(r"[A-Za-zА-Яа-яЁёĞÜŞİÖÇğüşıöç]", stripped))
+
+
+def _name_letters(name: str) -> int:
+    return sum(1 for ch in str(name or "") if ch.isalpha())
 
 
 def _clean_title_fragment(fragment: str) -> str:
@@ -240,13 +262,18 @@ def extract_from_serper(
         domain = extract_root_domain(url)
         if domain_is_blacklisted(domain):
             continue
-
-        name = extract_company_name(entry.get("title", ""), domain)
-        if not name:
-            name = domain_to_fallback_name(domain)
-        if _normalize_token(name) in GENERIC_BAD_NAMES:
+        if _is_marketplace_junk(domain):
             continue
-        if not name:
+
+        fallback_name = domain_to_fallback_name(domain)
+        name = extract_company_name(entry.get("title", ""), domain) or fallback_name
+        if not _is_valid_company_name(name):
+            name = fallback_name
+        if not _is_valid_company_name(name):
+            continue
+        if _name_letters(name) < MIN_NAME_CHARS:
+            continue
+        if _normalize_token(name) in GENERIC_BAD_NAMES:
             continue
 
         candidates.append(
@@ -283,7 +310,35 @@ def merge_by_domain(candidates: Iterable[CompanyCandidate]) -> list[CompanyCandi
         existing.queries.extend(c.queries)
         existing.modifiers.extend(c.modifiers)
         existing.score += 5  # repeated hits = stronger signal
-    return list(by_domain.values())
+    return merge_by_normalized_name(list(by_domain.values()))
+
+
+def merge_by_normalized_name(candidates: Iterable[CompanyCandidate]) -> list[CompanyCandidate]:
+    """
+    Second-pass dedup by normalized name and country, even across domains.
+    This catches regional domains like wildberries.ru and wildberries.com.tr.
+    """
+    by_key: dict[tuple[str, str], CompanyCandidate] = {}
+    for c in candidates:
+        normalized_name = re.sub(r"[^\w]+", "", (c.name or "").lower())
+        country = (c.country_display or "").strip().lower()
+        key = (normalized_name, country)
+        if not normalized_name:
+            continue
+        if key not in by_key:
+            by_key[key] = c
+            continue
+
+        existing = by_key[key]
+        if c.score > existing.score:
+            existing.name = c.name
+            existing.domain = c.domain
+            existing.url = c.url
+            existing.score = c.score
+        existing.queries.extend(c.queries)
+        existing.modifiers.extend(c.modifiers)
+        existing.score += 5
+    return list(by_key.values())
 
 
 def _is_better_company_name(candidate: str, current: str, domain: str) -> bool:
@@ -314,6 +369,7 @@ def to_xlsx_rows(candidates: list[CompanyCandidate]) -> list[dict]:
                 "Lead Type": assign_lead_type(c),
                 "Keywords Used": " | ".join(sorted(set(c.queries))),
                 "Source Modifier": ",".join(sorted(set(c.modifiers))),
+                "Domain": c.domain,
             }
         )
     # Stable sort: by country, then by name

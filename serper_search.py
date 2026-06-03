@@ -104,9 +104,9 @@ class SerperClient:
         self._throttle = throttle_seconds
         self._session = requests.Session()
 
-    def search(self, query: str, country: str, num: int = 10) -> SerperResult:
+    def search(self, query: str, country: str, num: int = 10, hl: str = "en") -> SerperResult:
         country_display, gl = normalize_country(country)
-        payload = {"q": query, "gl": gl, "hl": "en", "num": num}
+        payload = {"q": query, "gl": gl, "hl": hl, "num": num}
         headers = {
             "X-API-KEY": self._api_key,
             "Content-Type": "application/json",

@@ -13,6 +13,9 @@ import os
 import re
 import smtplib
 import time
+import urllib.error
+import urllib.request
+import zlib
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formataddr, make_msgid
@@ -50,6 +53,12 @@ class SendConfig:
     live: bool = False
     test_recipient: str = ""
     sleep_s: float = DEFAULT_SLEEP_SECONDS
+    tracking_worker_url: str = ""
+    tracking_admin_secret: str = ""
+    tracking_campaign_id: str = ""
+    tracking_default_destination_path: str = ""
+    tracking_product_slug: str = ""
+    tracking_dry_run: bool = False
 
 
 @dataclass
@@ -197,6 +206,12 @@ def load_send_config(*, live: bool, test_recipient: str, sleep_s: float) -> Send
     smtp_port_raw = _cell_text(os.environ.get("SMTP_PORT"))
     smtp_user = _cell_text(os.environ.get("SMTP_USER"))
     smtp_pass = _cell_text(os.environ.get("SMTP_PASS"))
+    tracking_worker_url = _cell_text(os.environ.get("TRACKING_WORKER_URL"))
+    tracking_admin_secret = _cell_text(os.environ.get("TRACKING_ADMIN_SECRET"))
+    tracking_campaign_id = _cell_text(os.environ.get("TRACKING_CAMPAIGN_ID")) or dt.date.today().isoformat()
+    tracking_default_destination_path = _cell_text(os.environ.get("TRACKING_DEFAULT_DESTINATION_PATH"))
+    tracking_product_slug = _cell_text(os.environ.get("TRACKING_PRODUCT_SLUG"))
+    tracking_dry_run = _cell_text(os.environ.get("TRACKING_CREATE_TOKENS_IN_DRY_RUN")).lower() in {"1", "true", "yes"}
     missing = [
         name
         for name, value in (
@@ -225,6 +240,12 @@ def load_send_config(*, live: bool, test_recipient: str, sleep_s: float) -> Send
         live=live,
         test_recipient=_cell_text(test_recipient),
         sleep_s=sleep_s,
+        tracking_worker_url=tracking_worker_url,
+        tracking_admin_secret=tracking_admin_secret,
+        tracking_campaign_id=tracking_campaign_id,
+        tracking_default_destination_path=tracking_default_destination_path,
+        tracking_product_slug=tracking_product_slug,
+        tracking_dry_run=tracking_dry_run,
     )
 
 
@@ -300,6 +321,103 @@ def _build_message(*, live: bool, test_recipient: str, original_to: str, subject
     return test_recipient, dry_subject, dry_body
 
 
+def _tracking_enabled(config: SendConfig) -> bool:
+    return bool(config.tracking_worker_url and config.tracking_admin_secret and (config.live or config.tracking_dry_run))
+
+
+def _stable_buyer_id(slug: str, run_id: str = "") -> int:
+    return zlib.crc32(f"{run_id}:{slug}".encode("utf-8")) & 0x7FFFFFFF
+
+
+def _run_id_from_output_dir(output_dir: Path) -> str:
+    if output_dir.name == "05_profiles":
+        return output_dir.parent.name
+    return output_dir.name
+
+
+def _company_name(profile: dict, row: dict) -> str:
+    company = profile.get("company") if isinstance(profile.get("company"), dict) else {}
+    return (
+        _cell_text(company.get("display_name"))
+        or _cell_text(company.get("input_company_name"))
+        or _cell_text(row.get("公司名"))
+    )
+
+
+def _create_tracking_link(
+    *,
+    config: SendConfig,
+    slug: str,
+    run_id: str,
+    row_idx: int,
+    row: dict,
+    profile: dict,
+    email: str,
+) -> dict:
+    buyer_id = _stable_buyer_id(slug, run_id)
+    payload = {
+        "buyer_id": buyer_id,
+        "company_name": _company_name(profile, row),
+        "email_addr": email,
+        "campaign_id": config.tracking_campaign_id,
+        "product_slug": config.tracking_product_slug,
+        "destination_path": config.tracking_default_destination_path,
+        "profile_slug": slug,
+        "run_id": run_id,
+        "metadata": {
+            "profile_slug": slug,
+            "run_id": run_id,
+            "xlsx_row": row_idx,
+            "source_website": _cell_text(row.get("网站")),
+            "run_campaign": config.tracking_campaign_id,
+        },
+    }
+    endpoint = config.tracking_worker_url.rstrip("/") + "/admin/tokens"
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "X-API-Key": config.tracking_admin_secret,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise ConfigError(f"tracking token API failed: HTTP {exc.code} {detail}") from exc
+    except urllib.error.URLError as exc:
+        raise ConfigError(f"tracking token API failed: {exc.reason}") from exc
+
+    token_rows = data.get("tokens") if isinstance(data, dict) else None
+    if not token_rows:
+        raise ConfigError("tracking token API returned no token")
+    token_row = token_rows[0]
+    if not token_row.get("tracking_url"):
+        raise ConfigError("tracking token API returned no tracking_url")
+    return {
+        "buyer_id": buyer_id,
+        "token": token_row.get("token"),
+        "tracking_url": token_row.get("tracking_url"),
+        "expires_at": token_row.get("expires_at"),
+    }
+
+
+def _inject_tracking_link(body: str, tracking_url: str) -> str:
+    if "{{tracking_link}}" in body:
+        return body.replace("{{tracking_link}}", tracking_url)
+    if "{tracking_link}" in body:
+        return body.replace("{tracking_link}", tracking_url)
+    return (
+        body.rstrip()
+        + "\n\nYou can review the Redvia goji ingredient portfolio here:\n"
+        + tracking_url
+        + "\n"
+    )
+
+
 def _status_log_base(*, slug: str, mode: str, original_to: str, actual_to: str, subject: str) -> dict:
     return {
         "timestamp": dt.datetime.now().isoformat(timespec="seconds"),
@@ -334,6 +452,7 @@ def run_send(
     profiles_by_key = load_profiles(output_dir)
     log_path = output_dir / SEND_LOG_JSONL
     mode = "live" if config.live else "dry-run"
+    run_id = _run_id_from_output_dir(output_dir)
 
     summary = {"sent": 0, "skipped": 0, "errors": 0}
     for row_idx in range(2, sheet.max_row + 1):
@@ -389,6 +508,42 @@ def run_send(
             )
             continue
 
+        tracking_record = None
+        if _tracking_enabled(config):
+            try:
+                tracking_record = _create_tracking_link(
+                    config=config,
+                    slug=slug,
+                    run_id=run_id,
+                    row_idx=row_idx,
+                    row=row,
+                    profile=profile,
+                    email=original_to,
+                )
+                body = _inject_tracking_link(body, tracking_record["tracking_url"])
+            except Exception as exc:
+                error = _redact_secret(f"{type(exc).__name__}: {exc}", config.smtp_pass)
+                status_cell.value = f"error: {_short_error(error)}"
+                summary["errors"] += 1
+                actual_to = original_to if config.live else config.test_recipient
+                _log_record(
+                    log_path,
+                    {
+                        **_status_log_base(
+                            slug=slug,
+                            mode=mode,
+                            original_to=original_to,
+                            actual_to=actual_to,
+                            subject=subject,
+                        ),
+                        "status": "error",
+                        "tracking": None,
+                        "smtp_response": None,
+                        "error": error,
+                    },
+                )
+                continue
+
         actual_to, send_subject, send_body = _build_message(
             live=config.live,
             test_recipient=config.test_recipient,
@@ -420,6 +575,7 @@ def run_send(
                     **log_base,
                     "status": SENT_STATUS,
                     "message_id": message_id,
+                    "tracking": tracking_record,
                     "smtp_response": _redact_secret(smtp_response, config.smtp_pass),
                     "error": None,
                 },
@@ -433,6 +589,7 @@ def run_send(
                 {
                     **log_base,
                     "status": "error",
+                    "tracking": tracking_record,
                     "smtp_response": None,
                     "error": error,
                 },

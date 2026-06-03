@@ -21,6 +21,7 @@ BUYERS_COLUMNS = [
     "Lead Type",
     "Keywords Used",
     "Source Modifier",
+    "Domain",
 ]
 
 
@@ -44,6 +45,7 @@ def write_buyers_xlsx(rows: list[dict], output_path: Path) -> None:
     sheet.column_dimensions["C"].width = 16
     sheet.column_dimensions["D"].width = 44
     sheet.column_dimensions["E"].width = 18
+    sheet.column_dimensions["F"].width = 28
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     workbook.save(output_path)
@@ -114,6 +116,8 @@ VERIFIED_COLUMNS = [
     "Track Match",
     "Matched Track",
     "Evidence URL",
+    "Primary Vertical",
+    "Food/Supp Focus",
     "Rating Reason",
     "Outreach Angle",
     "Contact Count",
@@ -133,7 +137,7 @@ def write_verified_xlsx(rows: list[dict], output_path: Path) -> None:
     for row in rows:
         sheet.append([row.get(col, "") for col in VERIFIED_COLUMNS])
     sheet.freeze_panes = "A2"
-    widths = [32, 16, 14, 32, 28, 18, 36, 12, 16, 18, 14, 14, 10, 12, 12, 20, 36, 40, 36, 12, 12, 32, 42, 32]
+    widths = [32, 16, 14, 32, 28, 18, 36, 12, 16, 18, 14, 14, 10, 12, 12, 20, 36, 18, 18, 40, 36, 12, 12, 32, 42, 32]
     for idx, width in enumerate(widths, start=1):
         sheet.column_dimensions[chr(ord("A") + idx - 1)].width = width
     output_path.parent.mkdir(parents=True, exist_ok=True)

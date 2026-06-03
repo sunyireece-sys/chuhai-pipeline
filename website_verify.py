@@ -20,8 +20,33 @@ from schema import write_verified_xlsx
 
 log = logging.getLogger(__name__)
 
-PAGE_PATHS = ["", "/about", "/products"]
+PAGE_PATHS = [
+    "",
+    "/about",
+    "/about-us",
+    "/products",
+    "/catalog",
+    "/shop",
+    "/store",
+    "/category",
+    "/en/",
+    "/ru/",
+]
 MAX_PAGE_CHARS = 5000
+MAX_TOTAL_CHARS = 30000
+MAX_URLS_PER_SITE = 10
+GOJI_KEYWORDS = [
+    "goji",
+    "wolfberry",
+    "lycium",
+    "枸杞",
+    "годжи",
+    "годж",
+    "kurt üzümü",
+    "kurt uzumu",
+    "kustovnice",
+]
+GOJI_KEYWORD_RE = re.compile("|".join(re.escape(k) for k in GOJI_KEYWORDS), re.IGNORECASE)
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -112,6 +137,48 @@ def _html_to_text(content: str) -> str:
     return re.sub(r"\s+", " ", content).strip()
 
 
+def _response_text(resp: object) -> str:
+    encoding = getattr(resp, "encoding", None)
+    if encoding is None or str(encoding).lower() == "iso-8859-1":
+        content = getattr(resp, "content", b"")
+        try:
+            return content.decode("utf-8")
+        except UnicodeDecodeError:
+            return content.decode("cp1251", errors="ignore")
+    return getattr(resp, "text", "")
+
+
+def _goji_contexts(text: str, *, radius: int = 200, limit: int = 5) -> list[str]:
+    contexts: list[str] = []
+    for match in GOJI_KEYWORD_RE.finditer(text or ""):
+        start = max(0, match.start() - radius)
+        end = min(len(text), match.end() + radius)
+        contexts.append(text[start:end].strip())
+        if len(contexts) >= limit:
+            break
+    return contexts
+
+
+def _try_sitemap(client: object, base_url: str) -> list[str]:
+    """Pull up to 20 product-like URLs from sitemap.xml."""
+    try:
+        resp = client.get(urljoin(base_url.rstrip("/") + "/", "sitemap.xml"))
+        if resp.status_code != 200:
+            return []
+        urls = re.findall(r"<loc>([^<]+)</loc>", _response_text(resp))
+    except Exception:
+        return []
+    product_like = [
+        url
+        for url in urls
+        if any(
+            key in url.lower()
+            for key in ("product", "catalog", "shop", "goji", "berry", "годжи", "枸杞")
+        )
+    ]
+    return product_like[:20]
+
+
 def _fetch_website_pages(domain: str) -> tuple[str, list[str]]:
     import httpx
 
@@ -121,6 +188,24 @@ def _fetch_website_pages(domain: str) -> tuple[str, list[str]]:
 
     chunks: list[str] = []
     fetched_urls: list[str] = []
+    seen_urls: set[str] = set()
+
+    def add_url(client: httpx.Client, url: str) -> None:
+        if len(fetched_urls) >= MAX_URLS_PER_SITE or url in seen_urls:
+            return
+        seen_urls.add(url)
+        try:
+            resp = client.get(url)
+            resp.raise_for_status()
+        except Exception as exc:
+            log.info("website fetch failed %s: %s", url, exc)
+            return
+        text = _html_to_text(_response_text(resp))
+        if not text:
+            return
+        fetched_urls.append(str(resp.url))
+        chunks.append(f"SOURCE_URL: {resp.url}\n{text[:MAX_PAGE_CHARS]}")
+
     with httpx.Client(
         follow_redirects=True,
         timeout=10.0,
@@ -128,22 +213,25 @@ def _fetch_website_pages(domain: str) -> tuple[str, list[str]]:
     ) as client:
         for path in PAGE_PATHS:
             url = urljoin(base + "/", path.lstrip("/"))
-            try:
-                resp = client.get(url)
-                resp.raise_for_status()
-            except Exception as exc:
-                log.info("website fetch failed %s: %s", url, exc)
-                continue
-            text = _html_to_text(resp.text)
-            if not text:
-                continue
-            fetched_urls.append(str(resp.url))
-            chunks.append(f"SOURCE_URL: {resp.url}\n{text[:MAX_PAGE_CHARS]}")
-    return "\n\n".join(chunks), fetched_urls
+            add_url(client, url)
+
+        website_text = "\n\n".join(chunks)
+        if not _goji_contexts(website_text):
+            for url in _try_sitemap(client, base)[:5]:
+                add_url(client, url)
+
+    website_text = "\n\n".join(chunks)
+    contexts = _goji_contexts(website_text)
+    if contexts:
+        parsed = urlparse(base)
+        log.info("goji keyword hit on %s", parsed.netloc or base)
+        context_block = "\n".join(f"GOJI_KEYWORD_CONTEXT: {ctx}" for ctx in contexts)
+        website_text = f"{context_block}\n\n{website_text}"
+    return website_text[:MAX_TOTAL_CHARS], fetched_urls
 
 
 def fetch_website_text(domain: str) -> str:
-    """Fetch website home + /about + /products and return concatenated text."""
+    """Fetch selected website pages and return concatenated text."""
     text, _ = _fetch_website_pages(domain)
     return text
 
@@ -197,6 +285,8 @@ def run(xiaoman_xlsx: Path, output_path: Path, *, sleep_s: float = 2.0) -> Path:
                 "Track Match": verdict.track_match,
                 "Matched Track": verdict.matched_track,
                 "Evidence URL": verdict.evidence_url or evidence_fallback,
+                "Primary Vertical": verdict.primary_vertical,
+                "Food/Supp Focus": verdict.food_supplement_focus,
                 "Rating Reason": verdict.rating_reason,
                 "Outreach Angle": verdict.outreach_angle,
                 "Contact Count": row.get("Contact Count", ""),

@@ -30,6 +30,7 @@ import sys
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from openpyxl import load_workbook
@@ -43,7 +44,7 @@ from buyer_extract import (
 )
 from keyword_parser import KeywordPool, parse_markdown
 from schema import write_buyers_xlsx, write_xiaoman_xlsx
-from serper_search import SerperClient, SerperResult
+from serper_search import SerperClient, SerperResult, normalize_country
 from website_verify import run as run_website_verify
 from xiaoman_playwright import XiaomanPlaywrightClient, XiaomanRateLimitError, annotate_and_rank_companies
 
@@ -174,9 +175,34 @@ def setup_logging(run_dir: Path) -> None:
 # ----------------------------------------------------------------------
 
 
-def build_queries(pool: KeywordPool, max_queries: int) -> list[tuple[str, str, str]]:
+def detect_anchor_lang(anchor: str) -> str:
+    """Auto-detect anchor language by script/token. Returns ru, tr, or en."""
+    if re.search(r"[А-Яа-яЁё]", anchor):
+        return "ru"
+    if re.search(r"[ĞÜŞİÖÇğüşıöç]", anchor):
+        return "tr"
+    turkish_tokens = {"toptan", "satis", "satış", "ithalatci", "ithalatçı", "meyvesi"}
+    anchor_lower = anchor.lower()
+    if any(token in anchor_lower for token in turkish_tokens):
+        return "tr"
+    return "en"
+
+
+COUNTRY_LANGS_BY_GL = {
+    "ru": ["ru"],
+    "tr": ["tr"],
+}
+
+
+def country_langs(country: str) -> list[str]:
+    """Return permitted query languages for a Serper country code."""
+    _, gl = normalize_country(country)
+    return COUNTRY_LANGS_BY_GL.get(gl, ["en"])
+
+
+def build_queries(pool: KeywordPool, max_queries: int) -> list[tuple[str, str, str, str]]:
     """
-    Build (query_text, country, modifier_dim) tuples by Cartesian product.
+    Build (query_text, country, modifier_dim, hl) tuples by compatible language.
 
     Order: A → B → C → D, then country. This way `--max-queries` truncation keeps
     coverage of MODIFIER-A first (the most reliable signal) before tailing into D.
@@ -185,13 +211,21 @@ def build_queries(pool: KeywordPool, max_queries: int) -> list[tuple[str, str, s
     to ~0 on narrow phrases. Loose matching may pull off-topic results, which the
     buyer_extract domain blacklist and downstream step3 are expected to filter.
     """
-    queries: list[tuple[str, str, str]] = []
+    queries: list[tuple[str, str, str, str]] = []
+    skipped = 0
     for dim, mod_list in pool.modifiers_by_dim().items():
         for modifier in mod_list:
             for anchor in pool.anchors:
+                anchor_lang = detect_anchor_lang(anchor)
                 query_text = f"{anchor} {modifier}"
                 for country in pool.countries:
-                    queries.append((query_text, country, dim))
+                    if anchor_lang not in country_langs(country):
+                        skipped += 1
+                        continue
+                    queries.append((query_text, country, dim, anchor_lang))
+
+    if skipped:
+        logging.info("build_queries: skipped %d combos due to language mismatch", skipped)
 
     if len(queries) > max_queries:
         logging.info(
@@ -224,11 +258,11 @@ def run_step2(
     all_candidates: list[CompanyCandidate] = []
     raw_records: list[dict] = []
 
-    for idx, (query, country, dim) in enumerate(queries, start=1):
-        logging.info("[%d/%d] %s  (%s, MODIFIER-%s)", idx, len(queries), query, country, dim)
+    for idx, (query, country, dim, hl) in enumerate(queries, start=1):
+        logging.info("[%d/%d] %s  (%s, MODIFIER-%s, hl=%s)", idx, len(queries), query, country, dim, hl)
         try:
             result: SerperResult = client.search(
-                query=query, country=country, num=results_per_query
+                query=query, country=country, num=results_per_query, hl=hl
             )
         except Exception as exc:
             logging.error("  serper failed: %s — skipping this query", exc)
@@ -239,6 +273,7 @@ def run_step2(
                 "query": query,
                 "country": country,
                 "modifier": dim,
+                "hl": hl,
                 "country_code": result.country_code,
                 "organic": result.organic,
             }
@@ -274,7 +309,7 @@ def run_step2(
 
 
 def read_buyer_names(buyers_xlsx: Path) -> list[dict]:
-    """Load buyers.xlsx into [{Company Name, Country, Lead Type}, ...]."""
+    """Load buyers.xlsx into buyer dicts keyed by header names."""
     wb = load_workbook(buyers_xlsx, read_only=True)
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))
@@ -292,6 +327,7 @@ def read_buyer_names(buyers_xlsx: Path) -> list[dict]:
                 "Company Name": name,
                 "Country": (d.get("Country") or "").strip(),
                 "Lead Type": (d.get("Lead Type") or "").strip(),
+                "Domain": (d.get("Domain") or "").strip(),
             }
         )
     return out
@@ -347,6 +383,10 @@ COUNTRY_ALIASES_TO_ISO2 = {
     "ITALY": "IT",
     "NETHERLANDS": "NL",
     "THE NETHERLANDS": "NL",
+    "RUSSIA": "RU",
+    "RUSSIAN FEDERATION": "RU",
+    "TURKEY": "TR",
+    "TÜRKIYE": "TR",
     "UNITED KINGDOM": "GB",
     "UK": "GB",
     "GREAT BRITAIN": "GB",
@@ -369,12 +409,77 @@ def _normalize_country_to_iso2(value: object) -> str:
     return COUNTRY_ALIASES_TO_ISO2.get(code, "")
 
 
+def _domain_from_url_or_host(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    parsed = urlparse(text if "://" in text else f"//{text}")
+    host = (parsed.netloc or parsed.path.split("/", 1)[0]).strip().lower()
+    if "@" in host:
+        host = host.rsplit("@", 1)[1]
+    if ":" in host:
+        host = host.split(":", 1)[0]
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _collect_known_profile_domains(current_run_dir: Path) -> set[str]:
+    """Scan other non-test runs for domains that already reached step5 profiles."""
+    known: set[str] = set()
+    runs_root = current_run_dir.parent
+    if not runs_root.exists():
+        return known
+    for run_dir in runs_root.iterdir():
+        if not run_dir.is_dir() or run_dir == current_run_dir:
+            continue
+        if run_dir.name.startswith("test_"):
+            continue
+        profiles_dir = run_dir / "05_profiles" / "profiles"
+        if not profiles_dir.exists():
+            continue
+        for profile_path in profiles_dir.glob("*.json"):
+            try:
+                data = json.loads(profile_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            company = data.get("company") if isinstance(data, dict) else {}
+            if not isinstance(company, dict):
+                company = {}
+            for raw_domain in (
+                data.get("domain") if isinstance(data, dict) else "",
+                data.get("website") if isinstance(data, dict) else "",
+                company.get("domain"),
+                company.get("website"),
+            ):
+                domain = _domain_from_url_or_host(raw_domain)
+                if domain:
+                    known.add(domain)
+    return known
+
+
 def _buyer_key(row: dict) -> tuple[str, str, str]:
     return (
         (row.get("Company Name") or row.get("Input Company Name") or "").strip(),
         (row.get("Country") or row.get("Input Country") or "").strip(),
         (row.get("Lead Type") or row.get("Input Lead Type") or "").strip(),
     )
+
+
+def _dedupe_buyers_by_key(buyers: list[dict]) -> list[dict]:
+    seen: set[tuple[str, str, str]] = set()
+    out: list[dict] = []
+    dropped = 0
+    for buyer in buyers:
+        key = _buyer_key(buyer)
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        out.append(buyer)
+    if dropped:
+        logging.info("step3: dropped %d duplicate buyer rows before search", dropped)
+    return out
 
 
 def _buyer_key_id(key: tuple[str, str, str]) -> str:
@@ -821,6 +926,7 @@ def run_step3(
     xiaoman_xlsx = run_dir / "03_xiaoman.xlsx"
     progress_path = _step3_progress_path(xiaoman_xlsx)
     buyers = read_buyer_names(buyers_xlsx)
+    buyers = _dedupe_buyers_by_key(buyers)
     if not buyers:
         raise RuntimeError(f"step3: no buyer rows in {buyers_xlsx}")
 
@@ -876,7 +982,24 @@ def run_step3(
     else:
         buyers_to_run = buyers
 
+    known_domains = _collect_known_profile_domains(run_dir)
+    if known_domains:
+        before = len(buyers_to_run)
+        buyers_to_run = [
+            buyer for buyer in buyers_to_run
+            if _domain_from_url_or_host(buyer.get("Domain")) not in known_domains
+        ]
+        cross_dropped = before - len(buyers_to_run)
+        if cross_dropped:
+            logging.info("step3: dropped %d buyers already profiled in prior runs", cross_dropped)
+
     logging.info("step3: %d buyer rows to look up on xiaoman", len(buyers_to_run))
+    if not buyers_to_run:
+        logging.info("step3: no buyer rows remain after resume/dedup filters; refreshing summary only")
+        write_xiaoman_xlsx(rows_out, xiaoman_xlsx)
+        _log_step3_summary(buyers, rows_out, xiaoman_xlsx)
+        return xiaoman_xlsx
+
     logging.info(
         "step3 throttle: target %.1fs/buyer, jitter +/- %.1fs, batch %d, batch pause %.1fs",
         search_interval_s,

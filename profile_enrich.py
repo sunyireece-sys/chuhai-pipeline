@@ -92,8 +92,8 @@ OUTREACH_DRAFT_KEYS = (
 CJK_RE = re.compile(r"[\u3400-\u9fff\uF900-\uFAFF]")
 SENDER_NAME = "Nicky"
 SENDER_TITLE = "Sourcing Manager"
-SENDER_COMPANY = "Bairuiyuan Goji"
-SENDER_WEBSITE = "http://berylgoji.com"
+SENDER_COMPANY = os.environ.get("SENDER_COMPANY", "Redvia")
+SENDER_WEBSITE = os.environ.get("SENDER_WEBSITE", "https://redvia-tracking.redvia.workers.dev")
 FIXED_SENDER_SIGNATURE = "\n".join(
     [
         "Best regards,",
@@ -121,19 +121,12 @@ BANNED_WEB_MONITORING_PHRASES_TEXT = "\n".join(
     f'  - "{phrase}"' for phrase in BANNED_WEB_MONITORING_PHRASES
 )
 WEB_REFERENCE_OUTREACH_RE = re.compile(
-    r"\bI\s+noticed\b|"
-    r"\bI\s+saw\b|"
-    r"\bwe\s+reviewed\b|"
-    r"\byour\s+website\b|"
-    r"\bcompany\s+website\b|"
-    r"\baccording\s+to\b.{0,80}\bwebsite\b|"
-    r"\bthis\s+detail\b|"
-    r"\bsource[_\s-]*quote\b|"
-    r"\bcrawled\b|"
-    r"\bscraped\b",
+    r"\bwe\s+(?:saw|noticed)\s+(?:on\s+|from\s+)?your\s+website\b|"
+    r"\baccording\s+to\s+your\s+website\b|"
+    r"\bfrom\s+your\s+website\s+we\b|"
+    r"\byour\s+website\s+(?:shows|indicates)\s+that\b",
     re.IGNORECASE | re.DOTALL,
 )
-REQUIRED_SALES_EMAIL_FACTS = ("Bairuiyuan", "Ningxia", "2003")
 REQUIRED_SALES_CTA_HINTS = (
     "target volume",
     "spec",
@@ -316,6 +309,8 @@ class VerifiedLead:
     track_match: str
     matched_track: str
     evidence_url: str
+    primary_vertical: str
+    food_supplement_focus: str
     rating_reason: str
     outreach_angle: str
     contact_count: str
@@ -428,6 +423,8 @@ def _lead_from_row(row: dict) -> VerifiedLead:
         track_match=_cell_text(row.get("Track Match")),
         matched_track=_cell_text(row.get("Matched Track")),
         evidence_url=_cell_text(row.get("Evidence URL")),
+        primary_vertical=_cell_text(row.get("Primary Vertical")),
+        food_supplement_focus=_cell_text(row.get("Food/Supp Focus")),
         rating_reason=_cell_text(row.get("Rating Reason")),
         outreach_angle=_cell_text(row.get("Outreach Angle")),
         contact_count=_cell_text(row.get("Contact Count")),
@@ -1104,15 +1101,15 @@ Rules:
 - Outreach drafts must not invent target-company certifications, purchase
   intent, decision makers, volumes, pricing, production capacity, or existing
   relationship. Only supplier certifications listed in supplier_profile may be
-  mentioned for Bairuiyuan.
+  mentioned for {SENDER_COMPANY}.
 - Outreach drafts must use only a generalized business direction inferred from
   the profile, such as nutrition, wellness, functional food, botanical
   formulation, skincare, tea/herbal, or pet nutrition. Do not copy or expose
   source quotes, page titles, raw crawler text, or page-specific observations.
 - Use supplier_profile as the supplier source of truth. The outreach product
-  source is Bairuiyuan goji from Ningxia, China.
+  source is {SENDER_COMPANY} goji from Ningxia, China.
 - Use this sender identity exactly, with literal text rather than placeholders:
-  Nicky, Sourcing Manager, Bairuiyuan Goji.
+  Nicky, Sourcing Manager, {SENDER_COMPANY}.
 - Do not use {{sender.name}}, {{sender.company}}, {{sender.title}},
   {{sender.email_signature}}, [Your Name], or any other sender placeholder.
 - Write Chinese analysis fields for internal review.
@@ -1126,7 +1123,7 @@ Rules:
   pet_food, other. If the track is other, use nutraceutical_supplements as the
   supplier hook fallback.
 - Choose the matching supplier_profile.use_case_angles value and make it the
-  Bairuiyuan capability hook in cold_email_body.
+  {SENDER_COMPANY} capability hook in cold_email_body.
 - After the greeting, open naturally as a foreign-trade sourcing email. Ask
   whether the recipient's team is currently sourcing goji berries or goji
   extract for related product lines. It is acceptable to mention the generalized
@@ -1134,21 +1131,43 @@ Rules:
 - Outreach drafts must never create a monitoring, scraping, audit, or direct
   quotation feeling. Banned phrasings include:
 {BANNED_WEB_MONITORING_PHRASES_TEXT}
-- cold_email_body must introduce Bairuiyuan as founded in 2003 in Ningxia, with
+- The opening sentence of cold_email_body (immediately after the greeting)
+  MUST reference one specific aspect of the target company's business taken
+  from profile.bio_en or profile.business_relevance_cn (for example,
+  "Your line of cold-pressed botanical serums stood out because..." or
+  "Your team's expansion into adaptogenic functional drinks lines up with...").
+  Generic openers such as "I am reaching out to ask whether your team is
+  currently sourcing goji" are BANNED — they make every email look identical
+  and waste the recipient's attention. The reference must be framed
+  positively as recognition, not as a web audit observation.
+- cold_email_body must introduce {SENDER_COMPANY} as a Ningxia goji operation est. 2003, with
   self-managed organic goji plantations and goji extract capability. Mention
   relevant certifications by geography: for Europe emphasize EU BCS Organic;
   for the United States or North America emphasize FDA and KOSHER; for the
   Middle East emphasize HALAL.
+- After identifying the recipient country from lead.website_country (or
+  lead.input_country if website_country is empty or "unclear"), weave ONE
+  sentence into cold_email_body about the geo-specific procurement context,
+  then naturally lead into the {SENDER_COMPANY} certification mention.
+  Adapt these framings (do not copy verbatim):
+    - EU: "European functional-ingredient buyers increasingly require BCS
+      Organic certification for organic claims on retail packaging."
+    - US / North America: "US supplement-channel buyers typically require
+      FDA registration and KOSHER for the formulator audit."
+    - Middle East: "HALAL certification is essential for retail acceptance
+      across GCC markets."
+    - Other regions: pick the closest applicable framing or omit this
+      sentence if no clear regional standard applies.
 - cold_email_body must invite the recipient to reply with volume/spec needs or
   schedule a 15-minute video call.
 - cold_email_body and follow_up_email must end with this exact signature:
   Best regards,
   Nicky
-  Sourcing Manager, Bairuiyuan Goji
-  http://berylgoji.com
+  Sourcing Manager, {SENDER_COMPANY}
+  {SENDER_WEBSITE}
 - cold_email_subject must include the target company name and a business-track
   keyword. Examples: "Ningxia organic goji for [company] skincare line" or
-  "Bairuiyuan goji extract — supplement formulation partner for [company]".
+  "{SENDER_COMPANY} goji extract — supplement formulation partner for [company]".
 - whatsapp_or_linkedin_message must be 80 words or fewer, ask about sourcing or
   procurement needs, and avoid page-specific observations.
 - follow_up_email must be 120 words or fewer, reference the first email subject,
@@ -1163,7 +1182,9 @@ Output JSON schema:
     "country": string,
     "step4_rating": string,
     "step4_customer_type": string,
-    "step4_goji_presence": string
+    "step4_goji_presence": string,
+    "step4_primary_vertical": string,
+    "step4_food_supplement_focus": string
   },
   "profile": {
     "bio_cn": string,
@@ -1191,7 +1212,7 @@ Output JSON schema:
     "follow_up_email": string
   }
 }
-""".strip().replace("{BANNED_WEB_MONITORING_PHRASES_TEXT}", BANNED_WEB_MONITORING_PHRASES_TEXT)
+""".strip().replace("{BANNED_WEB_MONITORING_PHRASES_TEXT}", BANNED_WEB_MONITORING_PHRASES_TEXT).replace("{SENDER_COMPANY}", SENDER_COMPANY).replace("{SENDER_WEBSITE}", SENDER_WEBSITE)
 
 NICKY_STYLE_SYSTEM_PROMPT = """
 You are a senior B2B foreign-trade copy editor for an exporter of Ningxia goji
@@ -1204,7 +1225,7 @@ or web-monitoring phrasing. Only change phrasing and tone.
 Style targets:
 - Natural foreign-trade sourcing tone: state the purpose, ask whether goji
   berries or goji extract are relevant to current sourcing needs, and introduce
-  Bairuiyuan's capability without sounding like a web audit.
+  {SENDER_COMPANY}'s capability without sounding like a web audit.
 - "This is {NAME} of {COMPANY}" or "My name is {NAME} with {COMPANY}"
   instead of "I am {NAME} from {COMPANY}".
 - "I am reaching out to ask whether your team is currently sourcing goji berries
@@ -1233,15 +1254,15 @@ Hard constraints:
 - Do NOT remove or alter the signature block:
   Best regards,
   Nicky
-  Sourcing Manager, Bairuiyuan Goji
-  http://berylgoji.com
+  Sourcing Manager, {SENDER_COMPANY}
+  {SENDER_WEBSITE}
 - Do NOT change company names, certification names, founding year (2003),
   Ningxia, or any factual claim.
 - Do NOT add new factual claims that were not in the input.
 
 Return ONLY valid JSON with these four string keys, no markdown:
 cold_email_subject, cold_email_body, whatsapp_or_linkedin_message, follow_up_email.
-""".strip().replace("{BANNED_WEB_MONITORING_PHRASES_TEXT}", BANNED_WEB_MONITORING_PHRASES_TEXT)
+""".strip().replace("{BANNED_WEB_MONITORING_PHRASES_TEXT}", BANNED_WEB_MONITORING_PHRASES_TEXT).replace("{SENDER_COMPANY}", SENDER_COMPANY).replace("{SENDER_WEBSITE}", SENDER_WEBSITE)
 
 
 def _json_loads_loose(text: str) -> dict:
@@ -1529,6 +1550,8 @@ def normalize_profile_draft(lead: VerifiedLead, profile: dict, contacts: Contact
     company.setdefault("step4_rating", lead.rating)
     company.setdefault("step4_customer_type", lead.customer_type)
     company.setdefault("step4_goji_presence", lead.goji_presence)
+    company.setdefault("step4_primary_vertical", lead.primary_vertical)
+    company.setdefault("step4_food_supplement_focus", lead.food_supplement_focus)
 
     body = profile.setdefault("profile", {})
     for key in (
@@ -1740,6 +1763,36 @@ def _supplier_certifications_for_country(lead: VerifiedLead, supplier_profile: d
     return selected or supplier_certs[:2]
 
 
+def _country_procurement_note(lead: VerifiedLead) -> str:
+    country = " ".join(
+        [lead.input_country or "", lead.website_country or "", lead.domain or ""]
+    ).lower()
+    eu_tokens = (
+        "europe", "germany", "france", "italy", "spain", "netherlands",
+        "belgium", "austria", "switzerland", "poland", "sweden", "denmark",
+        "norway", "finland", "united kingdom", "uk",
+        ".de", ".fr", ".it", ".es", ".nl", ".eu",
+    )
+    us_tokens = ("united states", "usa", "u.s.", "north america", "canada")
+    me_tokens = (
+        "middle east", "uae", "united arab emirates", "saudi", "qatar",
+        "kuwait", "bahrain", "oman", "jordan", "israel", "turkey",
+    )
+    if any(token in country for token in eu_tokens):
+        return (
+            "European functional-ingredient buyers increasingly require BCS Organic "
+            "certification for organic claims on retail packaging."
+        )
+    if any(token in country for token in us_tokens) or re.search(r"\bus\b", country):
+        return (
+            "US supplement-channel buyers typically require FDA registration and "
+            "KOSHER for the formulator audit."
+        )
+    if any(token in country for token in me_tokens):
+        return "HALAL certification is essential for retail acceptance across GCC markets."
+    return ""
+
+
 def _english_evidence_sentence(fact_check: dict, profile: dict | None = None) -> str:
     track_label = TRACK_LABELS.get(_infer_business_track(profile or {}), TRACK_LABELS[TRACK_FALLBACK])
     return (
@@ -1765,9 +1818,7 @@ def _outreach_missing_required_sales_elements(profile: dict) -> bool:
     if not body:
         return False
     body_lower = body.lower()
-    missing_fact = any(fact.lower() not in body_lower for fact in REQUIRED_SALES_EMAIL_FACTS)
-    missing_cta = not any(hint in body_lower for hint in REQUIRED_SALES_CTA_HINTS)
-    return missing_fact or missing_cta
+    return not any(hint in body_lower for hint in REQUIRED_SALES_CTA_HINTS)
 
 
 def _safe_sales_outreach_template(
@@ -1794,32 +1845,30 @@ def _safe_sales_outreach_template(
     cert_text = ", ".join(certs) if certs else "FDA, HALAL, KOSHER, and ISO 22000"
     origin = _cell_text(supplier_profile.get("origin")) or "Ningxia, China"
     founded_year = _cell_text(supplier_profile.get("founded_year")) or "2003"
-    subject = f"Bairuiyuan Ningxia goji for {display_name} {track_label}"
+    country_note = _country_procurement_note(lead)
+    country_clause = f" {country_note}" if country_note else ""
+    subject = f"{display_name} — {SENDER_COMPANY} Ningxia goji for {track_label}"
     body = (
         f"Dear {display_name} team,\n\n"
-        "I am reaching out to ask whether your team is currently sourcing goji berries "
-        "or goji extract for related product lines.\n\n"
-        f"Bairuiyuan supplies Ningxia goji ingredients for {partner_label} partners. "
-        f"For {track_label} programs, our goji can support {supplier_angle}.\n\n"
-        f"Bairuiyuan was founded in {founded_year} in {origin}. We operate self-managed organic "
-        "goji plantations and supply dried goji berries and goji extract, including LBP 10%-50%, "
-        f"with relevant certifications such as {cert_text}.\n\n"
-        "If this category is relevant, please reply with any target volume or spec needs, "
-        "or connect me with the sourcing or product contact responsible for botanical ingredients. "
-        "I would also be glad to arrange a 15-minute video call.\n\n"
+        f"Reaching out from {SENDER_COMPANY} about goji ingredient sourcing for "
+        f"{track_label} programs.{country_clause}\n\n"
+        f"{SENDER_COMPANY} operates self-managed organic goji plantations in {origin} "
+        f"(est. {founded_year}). For your category we can support {supplier_angle} with "
+        f"{cert_text} certifications.\n\n"
+        "If goji sits in your roadmap, happy to share specs or samples, or set up a "
+        "15-minute video call. Either reply, or point me at the right sourcing contact.\n\n"
         f"{FIXED_SENDER_SIGNATURE}"
     )
     message = (
-        f"Hello {display_name} team, this is Nicky with Bairuiyuan Goji. We supply Ningxia "
-        f"goji berries and extract for {track_label} and related botanical ingredient needs. "
-        "Is your team reviewing goji sourcing, or could you connect me with the sourcing "
-        "or product contact?"
+        f"Hello {display_name} team, this is {SENDER_NAME} from {SENDER_COMPANY} — we supply "
+        f"Ningxia goji berries and extract for {track_label} programs. Is your team reviewing "
+        "goji sourcing? Happy to be pointed at the right sourcing contact."
     )
     follow_up = (
         f"Dear {display_name} team,\n\n"
         f"Following up on my note about {subject}. I can send a spec sheet or sample options "
-        f"for Bairuiyuan Ningxia goji, including {cert_text}. Would it be useful to compare "
-        "specs, or schedule a 15-minute video call?\n\n"
+        f"for {SENDER_COMPANY} Ningxia goji, including {cert_text}. Useful to compare specs, "
+        "or schedule a 15-minute video call?\n\n"
         f"{FIXED_SENDER_SIGNATURE}"
     )
     return {
@@ -1857,7 +1906,7 @@ def _enforce_sales_outreach_no_web_reference_language(
         return False
     profile["outreach"] = _safe_sales_outreach_template(lead, profile, fact_check, supplier_profile)
     profile["outreach"]["outreach_note"] = (
-        "Safe Bairuiyuan outreach template applied because the LLM draft contained website-reference phrasing."
+        "Safe Redvia outreach template applied because the LLM draft used explicit website-quoting language."
     )
     _normalize_outreach_templates(profile)
     return True
@@ -1875,7 +1924,7 @@ def _enforce_sales_outreach_required_elements(
         return False
     profile["outreach"] = _safe_sales_outreach_template(lead, profile, fact_check, supplier_profile)
     profile["outreach"]["outreach_note"] = (
-        "Safe Bairuiyuan outreach template applied because the LLM draft missed required supplier facts or CTA."
+        "Safe Redvia outreach template applied because the LLM draft missed a clear CTA."
     )
     _normalize_outreach_templates(profile)
     return True
@@ -1911,7 +1960,7 @@ def finalize_profile_quality(
         llm_enrichment_failed = True
         outreach_safe_template_applied = True
         profile["outreach"]["outreach_note"] = (
-            "Safe Bairuiyuan outreach template applied because the LLM draft returned empty outreach fields."
+            "Safe Redvia outreach template applied because the LLM draft returned empty outreach fields."
         )
     elif profile.get("outreach_mode") == "sales" and not sender_profile_present:
         profile["outreach"] = _safe_sales_outreach_template(lead, profile, fact_check, supplier_profile)
