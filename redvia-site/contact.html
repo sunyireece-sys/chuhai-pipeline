@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact · Redvia</title>
+  <meta name="description" content="Request specs, CoAs, and samples from Redvia. Direct from the Ningxia plantation. Reply within 48 hours.">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500;1,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/tokens.css">
+  <link rel="stylesheet" href="assets/css/base.css">
+  <link rel="stylesheet" href="assets/css/components.css">
+  <script defer src="assets/js/site.js"></script>
+  <link rel="stylesheet" href="assets/css/chat-widget-preview.css">
+  <script defer src="assets/js/chat-widget-preview.js"></script>
+</head>
+<body>
+
+  <header class="nav">
+    <div class="container nav__inner">
+      <a class="nav__brand" href="index.html">REDVIA</a>
+      <button class="nav__toggle" aria-label="Toggle menu" onclick="document.querySelector('.nav__links').classList.toggle('is-open')">≡</button>
+      <nav class="nav__links">
+        <a class="nav__link" href="index.html">Home</a>
+        <a class="nav__link" href="origin.html">Origin</a>
+        <a class="nav__link" href="ingredients.html">Products</a>
+        <a class="nav__link" href="about.html">About</a>
+        <a class="nav__link is-active" href="contact.html">Contact</a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="hero">
+    <span class="hero__ornament hero__ornament--tl">❦</span>
+    <span class="hero__ornament hero__ornament--tr">❦</span>
+    <span class="hero__ornament hero__ornament--bl">❦</span>
+    <span class="hero__ornament hero__ornament--br">❦</span>
+    <div class="container container--narrow">
+      <p class="eyebrow hero__eyebrow">— Get in Touch —</p>
+      <h1 class="hero__title">Tell us what<br>you're building.</h1>
+      <p class="hero__lede">We reply with specs, CoAs and samples within 48 hours. Direct contact below.</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="contact-callout">
+        <p class="eyebrow">— Direct Line —</p>
+        <a class="contact-callout__email" href="mailto:trade@redvia-bry.com">trade@redvia-bry.com</a>
+        <div class="contact-callout__phones">
+          <a href="tel:+16513991568">US +1 (651) 399-1568</a> &nbsp;&middot;&nbsp; <a href="tel:+8613918338133">CN +86 139 1833 8133</a>
+        </div>
+      </div>
+
+      <div class="contact-proof" aria-label="Redvia source and quality images">
+        <figure class="contact-proof__item">
+          <img src="assets/img/origin/lab-rd-v2.jpg" alt="Bairuiyuan research and quality building" loading="lazy">
+          <figcaption>Quality desk</figcaption>
+        </figure>
+        <figure class="contact-proof__item">
+          <img src="assets/img/origin/production-line-v2.jpg" alt="Goji processing line in Ningxia" loading="lazy">
+          <figcaption>Ningxia processing</figcaption>
+        </figure>
+        <figure class="contact-proof__item">
+          <img src="assets/img/origin/plantation-aerial-v2.jpg" alt="Bairuiyuan goji plantation in Ningxia" loading="lazy">
+          <figcaption>12,000-mu plantation</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="section bg-soft">
+    <div class="container">
+      <div class="section__head">
+        <p class="eyebrow">— The Source —</p>
+        <h2 class="section__title">Direct from<br>Ningxia.</h2>
+        <p class="section__sub">Cultivation, processing, packing, and quality testing all happen at the plantation. International sales and sample requests come straight from the same operation.</p>
+      </div>
+
+      <div class="addr-grid addr-grid--single">
+        <div class="addr-card">
+          <div class="addr-card__media">
+            <img src="assets/img/origin/production-line-v2.jpg" alt="Bairuiyuan Ningxia source and processing facility" loading="lazy">
+          </div>
+          <p class="addr-card__eyebrow">— Ningxia —</p>
+          <span class="addr-card__role">Source · Processing · Quality</span>
+          <h3 class="addr-card__title">Bairuiyuan Goji Plantation</h3>
+          <div class="addr-card__body">
+            No.1-1 Decheng East Road,<br>
+            Helan Industry Park,<br>
+            Yinchuan,<br>
+            Ningxia, China<br><br>
+            <strong>Established</strong> 2003 &nbsp;·&nbsp; <strong>Area</strong> 12,000 mu
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container">
+      <div class="section__head">
+        <p class="eyebrow">— Request Specs —</p>
+        <h2 class="section__title">Send a brief.</h2>
+        <p class="section__sub">Tell us the product form, target market, and any spec or cert requirements. We'll come back with a recommendation, sample, and pricing within 48 hours.</p>
+      </div>
+
+      <form class="form" id="contact-form">
+        <div class="form__field">
+          <label class="form__label" for="name">Your name</label>
+          <input class="form__input" id="name" type="text" required>
+        </div>
+        <div class="form__field">
+          <label class="form__label" for="company">Company</label>
+          <input class="form__input" id="company" type="text">
+        </div>
+        <div class="form__field">
+          <label class="form__label" for="email">Work email</label>
+          <input class="form__input" id="email" type="email" required>
+        </div>
+        <div class="form__field">
+          <label class="form__label" for="country">Country / market</label>
+          <input class="form__input" id="country" type="text">
+        </div>
+        <div class="form__field form__field--wide">
+          <label class="form__label" for="brief">What are you formulating?</label>
+          <textarea class="form__textarea" id="brief" placeholder="e.g. anthocyanin-rich beauty drink, 50,000 units/year, EU market, EU BCS Organic required"></textarea>
+        </div>
+        <button class="btn btn--primary form__submit" type="submit">Send Brief</button>
+      </form>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer__inner">
+        <div>
+          <div class="footer__brand">Redvia.</div>
+          <div class="footer__tag">— Living Goji Products —</div>
+          <div class="footer__contact">
+            <a href="mailto:trade@redvia-bry.com">trade@redvia-bry.com</a><br>
+            <a href="tel:+16513991568">US +1 (651) 399-1568</a><br>
+            <a href="tel:+8613918338133">CN +86 139 1833 8133</a>
+          </div>
+        </div>
+        <div>
+          <div class="footer__heading">Ningxia Plantation</div>
+          <div class="footer__addr">
+            <span class="footer__addr-label">Source &amp; Processing</span>
+            No.1-1 Decheng East Road<br>
+            Helan Industry Park<br>
+            Yinchuan, Ningxia
+          </div>
+        </div>
+      </div>
+      <div class="footer__bottom">
+        <span>© 2026 Redvia · Bairuiyuan Goji Co. Ltd.</span>
+        <nav class="footer__quick"><a href="origin.html">Origin</a> &middot; <a href="ingredients.html">Products</a> &middot; <a href="about.html">About</a> &middot; <a href="contact.html">Contact</a></nav>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

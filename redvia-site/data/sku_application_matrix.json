@@ -1,0 +1,61 @@
+{
+  "_meta": {
+    "version": "0.1-placeholder",
+    "description": "Priority matrix mapping each Redvia SKU to each application scenario. 0 = not recommended, 1 = possible, 2 = good fit, 3 = primary recommendation.",
+    "todo_before_production": "Sales lead + formulation expert to confirm priority values. Current values are cdai's initial proposal based on format characteristics — not yet reviewed."
+  },
+  "skus": [
+    { "id": "ningxia-red-goji",          "name": "Ningxia Red Goji",          "format": "whole-dried-berry",   "image": "../assets/img/products/ningxia-red-hero.jpg" },
+    { "id": "qinghai-red-goji",          "name": "Qinghai Red Goji",          "format": "whole-dried-berry",   "image": "../assets/img/products/qinghai-red-hero.jpg" },
+    { "id": "black-goji-berry",          "name": "Black Goji Berry",          "format": "whole-dried-berry",   "image": "../assets/img/products/black-goji-hero.jpg" },
+    { "id": "red-goji-puree",            "name": "Red Goji Puree",            "format": "puree",               "image": "../assets/img/products/red-goji-puree-hero.jpg" },
+    { "id": "black-goji-puree",          "name": "Black Goji Puree",          "format": "puree",               "image": "../assets/img/products/black-goji-puree-hero.jpg" },
+    { "id": "goji-leaf-tea",             "name": "Goji Leaf Tea",             "format": "leaf",                "image": "../assets/img/products/goji-leaf-tea-hero.jpg" },
+    { "id": "goji-leaf-matcha-powder",   "name": "Goji Leaf Matcha Powder",   "format": "leaf-powder",         "image": "../assets/img/products/leaf-tea-v2.jpg" },
+    { "id": "goji-polysaccharide-powder","name": "Goji Polysaccharide Powder","format": "functional-extract",  "image": "../assets/img/products/polysaccharide-v2.jpg" },
+    { "id": "goji-seed-oil",             "name": "Goji Seed Oil",             "format": "oil",                 "image": "../assets/img/products/seed-oil-stone-v2.jpg" }
+  ],
+  "priority": {
+    "rtd_beverage": {
+      "ningxia-red-goji": 1, "qinghai-red-goji": 1, "black-goji-berry": 0,
+      "red-goji-puree": 3, "black-goji-puree": 3,
+      "goji-leaf-tea": 1, "goji-leaf-matcha-powder": 2,
+      "goji-polysaccharide-powder": 2, "goji-seed-oil": 0
+    },
+    "bar_formulation": {
+      "ningxia-red-goji": 3, "qinghai-red-goji": 2, "black-goji-berry": 2,
+      "red-goji-puree": 1, "black-goji-puree": 1,
+      "goji-leaf-tea": 0, "goji-leaf-matcha-powder": 1,
+      "goji-polysaccharide-powder": 2, "goji-seed-oil": 1
+    },
+    "hot_beverage_mix": {
+      "ningxia-red-goji": 1, "qinghai-red-goji": 1, "black-goji-berry": 0,
+      "red-goji-puree": 2, "black-goji-puree": 1,
+      "goji-leaf-tea": 3, "goji-leaf-matcha-powder": 3,
+      "goji-polysaccharide-powder": 1, "goji-seed-oil": 0
+    },
+    "capsule_fill": {
+      "ningxia-red-goji": 0, "qinghai-red-goji": 0, "black-goji-berry": 0,
+      "red-goji-puree": 0, "black-goji-puree": 0,
+      "goji-leaf-tea": 0, "goji-leaf-matcha-powder": 0,
+      "goji-polysaccharide-powder": 3, "goji-seed-oil": 3
+    },
+    "powder_blend": {
+      "ningxia-red-goji": 1, "qinghai-red-goji": 1, "black-goji-berry": 1,
+      "red-goji-puree": 1, "black-goji-puree": 0,
+      "goji-leaf-tea": 0, "goji-leaf-matcha-powder": 3,
+      "goji-polysaccharide-powder": 3, "goji-seed-oil": 1
+    },
+    "topping_decoration": {
+      "ningxia-red-goji": 3, "qinghai-red-goji": 2, "black-goji-berry": 3,
+      "red-goji-puree": 1, "black-goji-puree": 1,
+      "goji-leaf-tea": 0, "goji-leaf-matcha-powder": 1,
+      "goji-polysaccharide-powder": 0, "goji-seed-oil": 0
+    }
+  },
+  "demo_path_pinned": {
+    "_comment": "For demo only: the canned 'happy path' is RTD beverage selection, so recommendation.html shows these 3 SKUs in this order.",
+    "scenario": "rtd_beverage",
+    "selected_skus": ["red-goji-puree", "goji-polysaccharide-powder", "black-goji-puree"]
+  }
+}

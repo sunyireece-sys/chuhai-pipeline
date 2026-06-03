@@ -1,0 +1,103 @@
+{
+  "_meta": {
+    "version": "0.1-placeholder",
+    "wording_rules": [
+      "Always use 'Reference application' / 'Suggested formulation example' / 'Representative use'",
+      "Never use 'client case', 'customer example', 'we have worked with', or any brand name",
+      "All numeric ranges are typical industry ranges, not contractual specifications",
+      "Each entry MUST be reviewed by the sales lead + a formulation expert before going to production"
+    ],
+    "todo_before_production": "Sales lead + formulation expert to rewrite each entry with accurate, brand-safe technical guidance. Actual reviewer names not yet assigned — do not put any specific person's name into outward-facing copy."
+  },
+  "applications": [
+    {
+      "application_scenario_id": "rtd_beverage",
+      "title": "Functional RTD beverage",
+      "summary": "Cold-fill or hot-fill ready-to-drink formats where goji contributes natural color and a recognizable functional ingredient without dominating the flavor profile.",
+      "recommended_sku_ids": ["red-goji-puree", "goji-polysaccharide-powder", "black-goji-puree"],
+      "key_parameters": [
+        {"label": "Typical inclusion", "value": "0.5 – 2% w/w"},
+        {"label": "Solubility", "value": "Fully soluble in cold water (puree); cold-dispersible (polysaccharide)"},
+        {"label": "pH stability", "value": "Stable across 3.5 – 6.5"},
+        {"label": "Color contribution", "value": "Warm amber to rose (red); deep indigo (black, anthocyanin-rich)"},
+        {"label": "Shelf life", "value": "12 months sealed, ambient"}
+      ],
+      "technical_note": "Goji puree integrates cleanly into both fruit-juice and functional-water formats. For pasteurized RTDs, the red puree holds color and clarity across the typical hot-fill window, while black goji puree contributes anthocyanin-driven color that responds visibly to pH — formulators using black puree should hold pH above 3.8 for visual stability. Polysaccharide powder is the right pick when the brief calls for a functional claim (immune, metabolic) without altering mouthfeel: it disperses cold and stays neutral in flavor. Pair the puree for color and sensory with the polysaccharide for claim support if both matter.",
+      "representative_image": null
+    },
+    {
+      "application_scenario_id": "bar_formulation",
+      "title": "Snack & nutrition bar",
+      "summary": "Whole-fruit visual cues and functional inclusion in protein bars, cereal bars, and adaptogen-category snack formats.",
+      "recommended_sku_ids": ["ningxia-red-goji", "goji-polysaccharide-powder", "qinghai-red-goji"],
+      "key_parameters": [
+        {"label": "Typical inclusion", "value": "3 – 8% w/w (whole berry); 0.5 – 2% (polysaccharide)"},
+        {"label": "Particle integrity", "value": "Whole berries hold shape through standard cold-press and oven-bake bar lines"},
+        {"label": "Water activity target", "value": "0.55 – 0.65 to retain berry chew without bleed"},
+        {"label": "Size grade", "value": "180 – 280 berries / 50 g for retail-pack visibility"},
+        {"label": "Shelf life", "value": "12 months sealed; protect from direct light to retain color"}
+      ],
+      "technical_note": "Whole Ningxia and Qinghai berries deliver the most visible fruit presence in a bar — sliced cross-sections show recognizable berry, which photographs well for packaging. Build the matrix to a slightly drier endpoint than for raisin formats; goji's natural sugars combined with low aw protect chew. If the brief calls for measurable functional dose without changing texture or color, layer in polysaccharide powder at 0.5 – 2% and reserve berry inclusion for the visual and clean-label role. Avoid extended high-shear mixing of whole berries to preserve integrity.",
+      "representative_image": null
+    },
+    {
+      "application_scenario_id": "hot_beverage_mix",
+      "title": "Herbal hot beverage & tea blend",
+      "summary": "Single-origin infusion blends, herbal tea bags, sachet powders, and ceremonial-grade matcha-style preparations.",
+      "recommended_sku_ids": ["goji-leaf-tea", "goji-leaf-matcha-powder", "ningxia-red-goji"],
+      "key_parameters": [
+        {"label": "Typical inclusion", "value": "100% (single-ingredient) or 15 – 40% (blends)"},
+        {"label": "Infusion conditions", "value": "85 – 95 °C, 3 – 5 min steep for leaf tea; whisk in 60 – 80 °C water for matcha-style"},
+        {"label": "Particle size", "value": "Cut & sift grade for tea bags; D90 ~50 μm for matcha-style powder"},
+        {"label": "Sensory profile", "value": "Vegetal, lightly sweet, low astringency; whole berry adds gentle red note when co-steeped"},
+        {"label": "Shelf life", "value": "18 months sealed, away from moisture"}
+      ],
+      "technical_note": "Goji leaf is uncommon in Western tea ranges, which makes it useful for herbal blend SKUs looking beyond chamomile, peppermint, and hibiscus. Pure goji leaf tea infuses to a soft jade hue with a clean vegetal note; the matcha-style powder gives a whisk-and-drink format that fits adaptogen and herbal-tea categories. For blends, whole Ningxia berries can be co-mingled to add visual cue and a faint sweetness without altering the leaf's dominant note. Keep berry moisture below 13% to prevent caking in the tea bag during storage.",
+      "representative_image": null
+    },
+    {
+      "application_scenario_id": "capsule_fill",
+      "title": "Encapsulated supplement formulation",
+      "summary": "Hard-shell and soft-gel capsule formats for immune, metabolic, eye-health, or general adaptogenic claims.",
+      "recommended_sku_ids": ["goji-polysaccharide-powder", "goji-seed-oil"],
+      "key_parameters": [
+        {"label": "Typical dose", "value": "200 – 500 mg polysaccharide per capsule; 300 – 700 mg seed oil per soft-gel"},
+        {"label": "Flowability", "value": "Polysaccharide powder runs cleanly on standard encapsulation lines without additional flow aids in most cases"},
+        {"label": "Oxidation stability", "value": "Seed oil benefits from nitrogen flush and amber blister; baseline shelf 18 months sealed"},
+        {"label": "Active marker", "value": "Polysaccharide content can be referenced as Lycium barbarum polysaccharides (LBP) by spec sheet"},
+        {"label": "Capsule compatibility", "value": "Gelatin and HPMC compatible (polysaccharide); gelatin and modified-starch soft-gel for seed oil"}
+      ],
+      "technical_note": "For capsule briefs, the choice between powder and oil is mostly a question of claim direction. Polysaccharide powder is the workhorse: it ships with a documented active marker, it flows on common encapsulators, and it fits immune and metabolic claims. Seed oil opens a different category — beauty-nutrition, skin-from-within, eye-health — and is commonly stacked with vitamin E or omega-3 in the same regimen. Briefs combining both formats usually run two SKUs in the same regimen rather than blending into a single capsule.",
+      "representative_image": null
+    },
+    {
+      "application_scenario_id": "powder_blend",
+      "title": "Functional powder blend & sachet",
+      "summary": "Stick packs, single-serve sachets, and tub-format functional powders covering greens, reds, immune, beauty, and recovery categories.",
+      "recommended_sku_ids": ["goji-polysaccharide-powder", "goji-leaf-matcha-powder", "red-goji-puree"],
+      "key_parameters": [
+        {"label": "Typical inclusion", "value": "5 – 15% w/w in blend"},
+        {"label": "Particle size", "value": "D90 < 80 μm for clean mouthfeel; coarser grades acceptable for fiber-forward blends"},
+        {"label": "Hygroscopicity", "value": "Moderate; co-formulate with anti-caking carrier or moisture-barrier sachet"},
+        {"label": "Solubility", "value": "Polysaccharide disperses cold; matcha-style requires brief whisk"},
+        {"label": "Shelf life", "value": "18 months sealed in moisture-barrier sachet"}
+      ],
+      "technical_note": "Functional powder blends are where goji's two formats — the fruit (dried puree powder) and the leaf (matcha-style green) — do different jobs in the same product line. A 'reds' SKU built around dried puree powder hits the antioxidant and color expectation. A 'greens' or 'daily wellness' SKU built around leaf matcha powder sits next to spirulina, chlorella, and moringa. Polysaccharide powder is the format-neutral functional layer, often dosed alongside other adaptogens. For sachet formats, prioritize moisture barriers — both fruit-derived and leaf-derived powders pick up ambient humidity faster than starch-based carriers.",
+      "representative_image": null
+    },
+    {
+      "application_scenario_id": "topping_decoration",
+      "title": "Premium topping & visual garnish",
+      "summary": "Whole-berry visual applications for bakery, granola, yogurt cups, trail mixes, retail bulk bins, and gift packaging.",
+      "recommended_sku_ids": ["ningxia-red-goji", "black-goji-berry", "qinghai-red-goji"],
+      "key_parameters": [
+        {"label": "Size grade", "value": "180 / 220 / 280 / 380 berries per 50 g — choose by visual goal"},
+        {"label": "Color uniformity", "value": "Premium grade selected for consistent red or deep-purple appearance"},
+        {"label": "Moisture content", "value": "11 – 13% for chew without sticking"},
+        {"label": "Water activity", "value": "≤ 0.65 for safety and texture stability"},
+        {"label": "Shelf life", "value": "12 months sealed; UV protection recommended for retail display"}
+      ],
+      "technical_note": "Topping applications are largely decided by grade selection. The larger size grades (180 / 220) are what shows up in product photography and specialty bakery; the smaller grades (380) suit granola and trail-mix bulk where visibility per gram matters more than individual berry presence. Black goji is rarer and reads as a darker counterpoint in retail visual mixes — it photographs as a near-black sphere with a faint purple cast and pairs with seeded breads, dark chocolate inclusions, and gift tea packaging. For yogurt and parfait toppings, hold final aw below 0.65 to prevent bleed into the dairy phase during retail shelf time."
+    }
+  ]
+}

@@ -53,6 +53,10 @@ webui/templates/tracking_demo.html
 redvia-site/NEXT_CHANGES.md
 redvia-site/asset_audit/
 redvia-site/mockup/
+redvia-site/assets/img/incoming/
+redvia-site/assets/img/icons/raw/
+redvia-site/assets/img/icons/_*.tsv
+redvia-site/assets/img/icons/raw/_*.tsv
 
 # Image-prep tooling
 tools/
