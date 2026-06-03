@@ -1288,11 +1288,11 @@ def _match_answers(conn: sqlite3.Connection, match_id: int) -> dict[str, object]
 
 
 def _load_match_matrix() -> dict:
-    return _read_json(REPO_ROOT / "web_claude" / "data" / "sku_application_matrix.json")
+    return _read_json(REPO_ROOT / "redvia-site" / "data" / "sku_application_matrix.json")
 
 
 def _load_reference_applications() -> dict[str, dict]:
-    payload = _read_json(REPO_ROOT / "web_claude" / "data" / "reference_applications.json")
+    payload = _read_json(REPO_ROOT / "redvia-site" / "data" / "reference_applications.json")
     apps = payload.get("applications") if isinstance(payload, dict) else []
     return {
         str(app.get("application_scenario_id")): app

@@ -4,7 +4,7 @@ compatibility_date = "2026-05-20"
 workers_dev = true
 
 [assets]
-directory = "../web_claude"
+directory = "../redvia-site"
 binding = "ASSETS"
 
 [[d1_databases]]

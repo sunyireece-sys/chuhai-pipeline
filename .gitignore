@@ -1,19 +1,73 @@
+# Secrets & environment
 .env
 .env.bak.*
+*.bak.*
+secrets/
+
+# Python
 .venv/
 __pycache__/
 *.pyc
-*.bak.*
+webui/__pycache__/
+
+# Local databases & state
 runs/
-secrets/
-replay.py
-auto_resume.log
-工作日志/
-.DS_Store
 webui/feedback.db
 webui/.users.json
-webui/__pycache__/
+auto_resume.log
+
+# OS / tooling caches
+.DS_Store
+.obsidian/
+.playwright-mcp/
 .claude/
 .codex/
 .superpowers/
+cloudflare/.wrangler/
+
+# Personal scaffolding (kept locally, not for public repo)
+CLAUDE.md
+AI_HANDOFF.md
+424AImeeting.md
+agent.md
+auto_resume.sh
+com.chuhai.pipeline.autoresume.plist
+
+# Operational dust
+keywords_pool/tracking.csv
+
+# One-off / draft scripts
+oneoff_*.py
+build_ranking_test_xiaoman.py
+cleanup_translate_classify.py
+redvia_workflow.md
+workflow_v*.md
+workflow_v*.html
+
+# WebUI demo seed data (contains pseudo-but-real-looking companies)
+webui/seed_validation_data.py
+webui/seed_tracking_demo.py
+webui/templates/tracking_demo.html
+
+# Internal site scaffolding
+redvia-site/NEXT_CHANGES.md
+redvia-site/asset_audit/
+redvia-site/mockup/
+
+# Image-prep tooling
+tools/
+
+# Backups & local redvia dirs
+backups/
 redvia/
+redvia_demo/
+
+# Business raw materials & learning notes (never public)
+工作日志/
+会议/
+Learning materials/
+独立站产品素材/
+*.pdf
+
+# Replay test artifact
+replay.py

@@ -1,5 +1,5 @@
-import skuMatrix from '../../web_claude/data/sku_application_matrix.json';
-import refs from '../../web_claude/data/reference_applications.json';
+import skuMatrix from '../../redvia-site/data/sku_application_matrix.json';
+import refs from '../../redvia-site/data/reference_applications.json';
 
 const CERTS = 'EU BCS Organic, USDA NOP, JAS Organic, BRCGS Food Safety, CNAS laboratory accreditation';
 
