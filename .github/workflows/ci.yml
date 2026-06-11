@@ -20,7 +20,7 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r webui/requirements.txt
 
       - name: Ruff lint
         run: ruff check .
