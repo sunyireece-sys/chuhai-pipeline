@@ -15,7 +15,7 @@ ownership model and update this document.
 1. Read [`ARCHITECTURE.md`](ARCHITECTURE.md) to understand the system topology.
 2. Clone the repo, create a Python 3.11 venv, `pip install -r requirements.txt`.
    `cd cloudflare && npm install` for the Worker side.
-3. Ask the maintainer (@sunyireece-sys) for secrets. Until Vaultwarden is up, secrets
+3. Ask the maintainers (@mtxpartners-eng/maintainers) for secrets. Until Vaultwarden is up, secrets
    are handed over out-of-band — never in GitHub Issues, PR descriptions, or chat
    plaintext.
 
@@ -29,9 +29,9 @@ ownership model and update this document.
 | Helper scripts (`scripts/`, `tools/`) | any collaborator |
 | `requirements.txt`, top-level configs (`pyproject.toml`, `.gitignore`) | any collaborator |
 
-## What requires @sunyireece-sys review
+## What requires @mtxpartners-eng/maintainers review
 
-These paths are owned by the maintainer per [`.github/CODEOWNERS`](.github/CODEOWNERS):
+These paths are owned by the maintainers per [`.github/CODEOWNERS`](.github/CODEOWNERS):
 
 - `pipeline.py` — orchestrator, money path
 - `xiaoman_playwright.py` — login-state-bound scraper, fragile to small changes
@@ -71,8 +71,6 @@ maintainer to run it and push fresh `runs/<dir>/03_xiaoman.xlsx` to a shared loc
 - `工作日志/`, `会议/`, `Learning materials/`, `独立站产品素材/` are gitignored and
   contain internal notes. Do not move content from them into tracked files without
   scrubbing.
-- The legacy `reeceYYYY-MM-DD.md` short-form work log is retired. Use the detailed
-  `工作日志/<date>.md` form (or the `工作日志/ai交接日志_<date>.md` form) only.
 - Architecture decisions belong in `docs/architecture/000N-*.md` (ADRs), not in commit
   messages or chat logs.
 

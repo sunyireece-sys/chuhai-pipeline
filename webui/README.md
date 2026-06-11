@@ -84,8 +84,7 @@ fly secrets set WEBUI_INITIAL_PASSWORD="new-seed-password"
 fly deploy
 ```
 
-The default URL is `https://chuhai-webui.fly.dev`. Access from mainland China
-may occasionally be slow or unstable.
+The default URL is `https://sales.redvia-bry.com`.
 
 ## Test Market Runs
 

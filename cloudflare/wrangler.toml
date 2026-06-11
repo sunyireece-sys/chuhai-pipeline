@@ -21,8 +21,8 @@ TOKEN_TTL_DAYS = "14"
 EVENT_SYNC_LIMIT = "500"
 ALLOWED_ORIGINS = "https://redvia-bry.com,https://www.redvia-bry.com,https://redvia-tracking.redvia.workers.dev"
 # Optional while the static site is still served by this Worker and webUI lives elsewhere.
-# Set to the sales webUI origin, for example "https://chuhai-webui.fly.dev".
-MATCH_API_BASE_URL = "https://chuhai-webui.fly.dev"
+# Set to the sales webUI origin.
+MATCH_API_BASE_URL = "https://sales.redvia-bry.com"
 
 [triggers]
 crons = ["* * * * *"]

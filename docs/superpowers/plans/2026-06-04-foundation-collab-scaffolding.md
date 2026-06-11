@@ -16,7 +16,7 @@
 |---|---|
 | §3.1 顶层文档 CONTRIBUTING / AGENTS | Task 9 |
 | §3.2 ADR 0001-0004 | Task 10 |
-| §3.3 reece 简短版废除 | Task 9 (CONTRIBUTING calls it out) |
+| §3.3 简短版日志废除 | Task 9 (CONTRIBUTING calls it out) |
 | §4.1 阶段 A secret 替换 | Task 13 |
 | §5 Devcontainer | Tasks 5–8 |
 | §7.1 CI 基线 | Tasks 1–3 |
@@ -270,7 +270,7 @@ git push origin main
 
 - [ ] **Step 5: Verify the run on GitHub**
 
-Open: https://github.com/sunyireece-sys/chuhai-pipeline/actions
+Open: https://github.com/mtxpartners-eng/chuhai-pipeline/actions
 Expected: workflow named "CI" runs against the just-pushed commit. Both `lint-and-test` and `worker-typecheck` jobs go green. If red, fix the failure inline and push again — do NOT mark this task done until CI is green.
 
 ---
@@ -283,19 +283,19 @@ Expected: workflow named "CI" runs against the just-pushed commit. Both `lint-an
 - [ ] **Step 1: Create CODEOWNERS**
 
 ```
-# Files that require @sunyireece-sys review.
+# Files that require @mtxpartners-eng/maintainers review.
 # Other files can be reviewed by any collaborator with write access.
 # Phase note (spec §1): this is the旧项目稳定期 model;
 # new projects (post-Apollo) will adopt distributed ownership.
 
-pipeline.py             @sunyireece-sys
-xiaoman_playwright.py   @sunyireece-sys
-llm_judge.py            @sunyireece-sys
-send_outreach.py        @sunyireece-sys
-cloudflare/             @sunyireece-sys
-.env.example            @sunyireece-sys
-.github/workflows/      @sunyireece-sys
-.github/CODEOWNERS      @sunyireece-sys
+pipeline.py             @mtxpartners-eng/maintainers
+xiaoman_playwright.py   @mtxpartners-eng/maintainers
+llm_judge.py            @mtxpartners-eng/maintainers
+send_outreach.py        @mtxpartners-eng/maintainers
+cloudflare/             @mtxpartners-eng/maintainers
+.env.example            @mtxpartners-eng/maintainers
+.github/workflows/      @mtxpartners-eng/maintainers
+.github/CODEOWNERS      @mtxpartners-eng/maintainers
 ```
 
 - [ ] **Step 2: Verify GitHub will parse it**
@@ -319,7 +319,7 @@ git push origin main
 
 - [ ] **Step 4: Verify on GitHub**
 
-Open https://github.com/sunyireece-sys/chuhai-pipeline/settings/branches
+Open https://github.com/mtxpartners-eng/chuhai-pipeline/settings/branches
 Optionally turn on branch protection for `main` and check "Require review from Code Owners". This is recommended but not blocking — note it as a follow-up if you skip.
 
 ---
@@ -607,8 +607,8 @@ Add a `# [company gateway]` comment line directly above each of these entries:
 ```bash
 # In a throwaway dir so we don't clobber the real .env
 mkdir -p /tmp/bootstrap-env-test && cd /tmp/bootstrap-env-test
-cp /Users/cdai@ideo.com/Documents/chuhai_pipeline/.env.example .
-SERPER_API_KEY=test123 bash /Users/cdai@ideo.com/Documents/chuhai_pipeline/scripts/bootstrap-env.sh
+cp ~/chuhai-pipeline/.env.example .
+SERPER_API_KEY=test123 bash ~/chuhai-pipeline/scripts/bootstrap-env.sh
 grep SERPER_API_KEY .env
 cd - && rm -rf /tmp/bootstrap-env-test
 ```
@@ -688,7 +688,7 @@ ownership model and update this document.
 2. Open the repo in a Devcontainer-aware IDE (VSCode, Cursor, Claude Code) and accept
    "Reopen in Container". Everything you need (Python 3.11, Node 20, ruff, pytest,
    wrangler, Bitwarden CLI) is preinstalled.
-3. Ask the maintainer (@sunyireece-sys) for secrets. Until Vaultwarden is up, secrets
+3. Ask the maintainer (@mtxpartners-eng/maintainers) for secrets. Until Vaultwarden is up, secrets
    are handed over out-of-band — never in GitHub Issues, PR descriptions, or Slack
    plaintext.
 
@@ -702,7 +702,7 @@ ownership model and update this document.
 | Helper scripts (`scripts/`, `tools/`) | any collaborator |
 | `requirements.txt`, top-level configs (`pyproject.toml`, `.gitignore`) | any collaborator |
 
-## What requires @sunyireece-sys review
+## What requires @mtxpartners-eng/maintainers review
 
 These paths are owned by the maintainer per [`.github/CODEOWNERS`](.github/CODEOWNERS):
 
@@ -747,8 +747,6 @@ to a shared location.
 - `工作日志/`, `会议/`, `Learning materials/`, `独立站产品素材/` are gitignored and
   contain internal notes. Do not move content from them into tracked files without
   scrubbing.
-- The legacy `reeceYYYY-MM-DD.md` short-form work log is retired. Use the detailed
-  `工作日志/<date>.md` form (or the new `工作日志/ai交接日志_<date>.md` form) only.
 - Architecture decisions belong in `docs/architecture/000N-*.md` (ADRs), not in commit
   messages or chat logs.
 
@@ -1097,7 +1095,7 @@ git commit -m "Docs: add ADR directory with 4 backfilled decisions"
 blank_issues_enabled: false
 contact_links:
   - name: Sales feedback (via webUI)
-    url: https://github.com/sunyireece-sys/chuhai-pipeline/blob/main/CONTRIBUTING.md#sales-feedback
+    url: https://github.com/mtxpartners-eng/chuhai-pipeline/blob/main/CONTRIBUTING.md#sales-feedback
     about: Sales should file feedback inside the webUI. A background sync job converts feedback into issues automatically.
 ```
 
@@ -1197,7 +1195,7 @@ List any CODEOWNERS-protected paths to avoid (default: see CONTRIBUTING.md).
 
 - [ ] **Step 5: Verify the three templates appear in the GitHub UI**
 
-After committing and pushing, open https://github.com/sunyireece-sys/chuhai-pipeline/issues/new/choose
+After committing and pushing, open https://github.com/mtxpartners-eng/chuhai-pipeline/issues/new/choose
 Expected: three options visible (Bug / Feature request / Agent task) plus a contact link for sales.
 
 - [ ] **Step 6: Commit**
@@ -1216,7 +1214,7 @@ This task is **UI-driven** (GitHub Projects v2 has no first-class IaC story we w
 
 - [ ] **Step 1: Create the labels**
 
-Open https://github.com/sunyireece-sys/chuhai-pipeline/labels and create:
+Open https://github.com/mtxpartners-eng/chuhai-pipeline/labels and create:
 
 | Name | Color | Description |
 |---|---|---|
@@ -1226,7 +1224,7 @@ Open https://github.com/sunyireece-sys/chuhai-pipeline/labels and create:
 | `area:cloudflare` | `#FBCA04` | cloudflare/ Worker + D1 |
 | `area:docs` | `#C5DEF5` | documentation |
 | `area:unknown` | `#CCCCCC` | needs triage |
-| `owner:user` | `#B60205` | @sunyireece-sys |
+| `owner:user` | `#B60205` | @mtxpartners-eng/maintainers |
 | `owner:intern` | `#D93F0B` | future intern |
 | `owner:agent` | `#0052CC` | coding agent (Codex / Claude) |
 | `owner:sales` | `#FBCA04` | sales-originated |
@@ -1238,7 +1236,7 @@ Delete GitHub's default labels (`bug`, `enhancement`, `help wanted`, etc.) — t
 
 - [ ] **Step 2: Create the Projects v2 board**
 
-Open https://github.com/users/sunyireece-sys/projects (or your org's projects page if applicable).
+Open https://github.com/orgs/mtxpartners-eng/projects (or your org's projects page if applicable).
 
 - Click "New project" → "Board" template.
 - Name: `chuhai-pipeline workflow`.
@@ -1261,7 +1259,7 @@ Project sidebar → "Settings" → "Manage access" → add `chuhai-pipeline` rep
 
 - [ ] **Step 5: Smoke-test by opening one of each issue type**
 
-Open https://github.com/sunyireece-sys/chuhai-pipeline/issues/new/choose, file a throwaway "Bug" issue titled `[smoke test] please ignore`. Expected:
+Open https://github.com/mtxpartners-eng/chuhai-pipeline/issues/new/choose, file a throwaway "Bug" issue titled `[smoke test] please ignore`. Expected:
 
 - Issue lands on the Projects board in the `Backlog` column.
 - Labels `area:unknown` + `priority:p2` are auto-applied.
@@ -1372,7 +1370,7 @@ After every task above is checked off, run this checklist:
 
 - [ ] Open a draft PR with a trivial whitespace change. Confirm:
   - CI runs and goes green (Task 3 verification).
-  - CODEOWNERS auto-requests `@sunyireece-sys` if the change touches a protected file (Task 4).
+  - CODEOWNERS auto-requests `@mtxpartners-eng/maintainers` if the change touches a protected file (Task 4).
   - The PR appears on the Projects board (Task 12).
   - Issue templates are reachable (Task 11).
 - [ ] Open the repo in your IDE → "Reopen in Container" → run `pytest webui/` from inside (Task 8).

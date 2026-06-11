@@ -69,11 +69,11 @@ GitHub（协作中枢）
 | 0003 | WebUI 技术栈 FastAPI + Jinja + HTMX + SQLite（不上 React / 不上 Postgres） |
 | 0004 | LLM provider 抽象集中在 `llm_judge.py`，pipeline 主链路不直调 LLM API |
 
-### 3.3 reece 简短版日志机制废除
+### 3.3 简短版日志机制废除
 
-- 旧机制：`工作日志/` 写双份，详细自用 + 短版 `reeceYYYY-MM-DD.md` 给"上司 reece"看
-- 修正：reece = 用户本人，没有上司视角；详细版已够用
-- 落地：CLAUDE.md "工作日志写双份"那段清理；旧的 `reece*.md` 保留作历史不删除；不再新增
+- 旧机制：`工作日志/` 写双份，详细自用 + 短版给"上司"看
+- 修正：没有上司视角；详细版已够用
+- 落地：CLAUDE.md "工作日志写双份"那段清理；旧的简短版日志保留作历史不删除；不再新增
 
 ## 4. Secret 公司化迁移 + 1Password 替代方案
 
@@ -213,13 +213,13 @@ docker compose exec webui pytest -q   # smoke
 `.github/CODEOWNERS`：
 
 ```
-pipeline.py            @sunyireece-sys
-xiaoman_playwright.py  @sunyireece-sys
-llm_judge.py           @sunyireece-sys
-send_outreach.py       @sunyireece-sys
-cloudflare/            @sunyireece-sys
-.env.example           @sunyireece-sys
-.github/workflows/     @sunyireece-sys
+pipeline.py            @mtxpartners-eng/maintainers
+xiaoman_playwright.py  @mtxpartners-eng/maintainers
+llm_judge.py           @mtxpartners-eng/maintainers
+send_outreach.py       @mtxpartners-eng/maintainers
+cloudflare/            @mtxpartners-eng/maintainers
+.env.example           @mtxpartners-eng/maintainers
+.github/workflows/     @mtxpartners-eng/maintainers
 ```
 
 其他文件（webui/ / redvia-site/ / docs/ / requirements.txt / 工具脚本）任何 reviewer 可批。
