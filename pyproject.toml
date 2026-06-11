@@ -1,0 +1,25 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [
+  ".venv",
+  ".devcontainer",
+  "runs",
+  "backups",
+  "redvia-site/assets",
+  "工作日志",
+  "会议",
+]
+
+[tool.ruff.lint]
+# Start permissive: pyflakes (F) + pycodestyle errors (E) + import sort (I)
+# Do NOT enable B/UP/N yet — existing code will explode.
+select = ["E", "F", "I"]
+ignore = [
+  "E501",  # line length: we'll tighten later
+]
+
+[tool.pytest.ini_options]
+testpaths = ["webui", "tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
