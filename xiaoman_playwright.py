@@ -37,8 +37,10 @@ from playwright.sync_api import (
     BrowserContext,
     Page,
     Response,
-    TimeoutError as PlaywrightTimeoutError,
     sync_playwright,
+)
+from playwright.sync_api import (
+    TimeoutError as PlaywrightTimeoutError,
 )
 
 try:

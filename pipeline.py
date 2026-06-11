@@ -46,8 +46,11 @@ from keyword_parser import KeywordPool, parse_markdown
 from schema import write_buyers_xlsx, write_xiaoman_xlsx
 from serper_search import SerperClient, SerperResult, normalize_country
 from website_verify import run as run_website_verify
-from xiaoman_playwright import XiaomanPlaywrightClient, XiaomanRateLimitError, annotate_and_rank_companies
-
+from xiaoman_playwright import (
+    XiaomanPlaywrightClient,
+    XiaomanRateLimitError,
+    annotate_and_rank_companies,
+)
 
 # ----------------------------------------------------------------------
 # CLI

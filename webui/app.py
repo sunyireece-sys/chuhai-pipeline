@@ -7,8 +7,8 @@ are appended to a SQLite database (feedback.db).
 """
 from __future__ import annotations
 
-import datetime as dt
 import base64
+import datetime as dt
 import hashlib
 import json
 import logging
@@ -29,8 +29,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from send_outreach import (
-    ConfigError,
     SEND_LOG_JSONL,
+    ConfigError,
     _build_message,
     _send_message,
     load_send_config,
