@@ -7,7 +7,7 @@ import os
 import re
 import sqlite3
 from email import policy
-from email.header import make_header, decode_header
+from email.header import decode_header, make_header
 from email.message import Message
 from email.parser import BytesParser
 from email.utils import parseaddr, parsedate_to_datetime

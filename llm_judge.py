@@ -11,7 +11,6 @@ import os
 import re
 from dataclasses import dataclass
 
-
 GOJI_RE = re.compile(
     r"\b(goji|goji berry|goji berries|wolfberry|wolfberries|lycium barbarum|"
     r"lycium chinense|goji powder|goji extract|dried goji|organic goji|"

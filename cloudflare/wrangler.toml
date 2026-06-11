@@ -14,12 +14,12 @@ database_id = "090495dd-fd9e-4fed-9901-29a6bdb3e563"
 migrations_dir = "migrations"
 
 [vars]
-SITE_URL = "https://redvia.com"
-COOKIE_DOMAIN = ".redvia.com"
+SITE_URL = "https://redvia-bry.com"
+COOKIE_DOMAIN = ".redvia-bry.com"
 COOKIE_MAX_AGE = "7776000"
 TOKEN_TTL_DAYS = "14"
 EVENT_SYNC_LIMIT = "500"
-ALLOWED_ORIGINS = "https://redvia-tracking.redvia.workers.dev"
+ALLOWED_ORIGINS = "https://redvia-bry.com,https://www.redvia-bry.com,https://redvia-tracking.redvia.workers.dev"
 # Optional while the static site is still served by this Worker and webUI lives elsewhere.
 # Set to the sales webUI origin, for example "https://chuhai-webui.fly.dev".
 MATCH_API_BASE_URL = "https://chuhai-webui.fly.dev"

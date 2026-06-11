@@ -110,7 +110,7 @@ def cmd_pick(countries_raw: list[str], force: bool) -> None:
     n_queries = len(pool.anchors) * pool.total_modifiers() * len(resolved)
     print(f"✓ 已生成: {md_path}")
     print(f"  国家: {', '.join(display_countries)}  |  预计查询数: {n_queries}")
-    print(f"\n运行命令（--max-queries 控制每次花费）：")
+    print("\n运行命令（--max-queries 控制每次花费）：")
     print(f"  python pipeline.py {md_path}")
     print(f"  python pipeline.py {md_path} --max-queries 30")
 
