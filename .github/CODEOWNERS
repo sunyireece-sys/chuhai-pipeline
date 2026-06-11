@@ -1,0 +1,13 @@
+# Files that require @sunyireece-sys review.
+# Other files can be reviewed by any collaborator with write access.
+# Phase note (spec §1): this is the old-project stable-period model;
+# new projects (post-Apollo) will adopt distributed ownership.
+
+pipeline.py             @sunyireece-sys
+xiaoman_playwright.py   @sunyireece-sys
+llm_judge.py            @sunyireece-sys
+send_outreach.py        @sunyireece-sys
+cloudflare/             @sunyireece-sys
+.env.example            @sunyireece-sys
+.github/workflows/      @sunyireece-sys
+.github/CODEOWNERS      @sunyireece-sys
