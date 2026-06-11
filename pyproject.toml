@@ -19,7 +19,15 @@ ignore = [
   "E501",  # line length: we'll tighten later
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Known violations in core files; clean up in a dedicated PR (plan task 2).
+# Keeping these here so CI stays green while we onboard collaborators.
+"profile_enrich.py" = ["F841"]      # unused partner_label, intentional placeholder
+"webui/app.py" = ["E741"]            # single-letter `l` in list comprehensions
+"webui/test_lead_priority.py" = ["E402"]  # imports after env-var bootstrap (intentional)
+
 [tool.pytest.ini_options]
 testpaths = ["webui", "tests"]
 python_files = ["test_*.py"]
-addopts = "-q"
+pythonpath = ["."]
+addopts = "-q --ignore=webui/.venv"
